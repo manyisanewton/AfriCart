@@ -30,6 +30,8 @@ class Config:
     )
     TESTING = False
     DEBUG = False
+    GUNICORN_TIMEOUT = int(os.getenv("GUNICORN_TIMEOUT", "60"))
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 
 class TestingConfig(Config):

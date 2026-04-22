@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from statistics import mean
 
 from app.extensions import db
 
@@ -67,6 +68,18 @@ class Product(db.Model):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    reviews = db.relationship(
+        "Review",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    flash_sales = db.relationship(
+        "FlashSale",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     @property
     def in_stock(self) -> bool:
@@ -75,3 +88,13 @@ class Product(db.Model):
     @property
     def price_amount(self) -> str:
         return f"{Decimal(self.price):.2f}"
+
+    @property
+    def review_count(self) -> int:
+        return len(self.reviews)
+
+    @property
+    def average_rating(self) -> float | None:
+        if not self.reviews:
+            return None
+        return round(mean(review.rating for review in self.reviews), 2)

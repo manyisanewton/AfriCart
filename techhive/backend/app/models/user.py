@@ -63,6 +63,24 @@ class User(db.Model):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    reviews = db.relationship(
+        "Review",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    notifications = db.relationship(
+        "Notification",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    delivery_agent_profile = db.relationship(
+        "DeliveryAgent",
+        back_populates="user",
+        uselist=False,
+        lazy="selectin",
+    )
     vendor_profile = db.relationship(
         "Vendor",
         back_populates="user",

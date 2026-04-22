@@ -1,10 +1,19 @@
 from decimal import Decimal
+from datetime import timezone
 
 
 def _money(value) -> str | None:
     if value is None:
         return None
     return f"{Decimal(value):.2f}"
+
+
+def _iso_datetime(value) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 def serialize_category(category) -> dict:
@@ -65,6 +74,8 @@ def serialize_product(product, include_related: bool = False) -> dict:
         "in_stock": product.in_stock,
         "is_active": product.is_active,
         "is_featured": product.is_featured,
+        "average_rating": product.average_rating,
+        "review_count": product.review_count,
         "category": serialize_category(product.category),
         "brand": serialize_brand(product.brand),
         "vendor": {
@@ -86,3 +97,30 @@ def serialize_product(product, include_related: bool = False) -> dict:
         ]
 
     return payload
+
+
+def serialize_banner(banner) -> dict:
+    return {
+        "id": banner.id,
+        "title": banner.title,
+        "subtitle": banner.subtitle,
+        "image_url": banner.image_url,
+        "link_url": banner.link_url,
+        "placement": banner.placement,
+        "sort_order": banner.sort_order,
+        "is_active": banner.is_active,
+        "starts_at": _iso_datetime(banner.starts_at),
+        "ends_at": _iso_datetime(banner.ends_at),
+    }
+
+
+def serialize_flash_sale(flash_sale) -> dict:
+    return {
+        "id": flash_sale.id,
+        "title": flash_sale.title,
+        "sale_price": flash_sale.sale_price_amount,
+        "starts_at": _iso_datetime(flash_sale.starts_at),
+        "ends_at": _iso_datetime(flash_sale.ends_at),
+        "is_active": flash_sale.is_active,
+        "product": serialize_product(flash_sale.product),
+    }

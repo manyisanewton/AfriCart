@@ -26,6 +26,28 @@ def test_root_endpoint_exposes_service_links(client):
     assert payload["message"] == "Welcome to the TechHive API."
     assert payload["docs_url"] == "/docs/"
     assert payload["health_url"] == "/health"
+    assert payload["readiness_url"] == "/ready"
+    assert payload["metrics_url"] == "/metrics"
+
+
+def test_readiness_endpoint(client):
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "status": "ready",
+        "service": "TechHive API",
+        "checks": {"database": "ok"},
+    }
+
+
+def test_metrics_endpoint(client):
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    payload = response.get_data(as_text=True)
+    assert "techhive_app_info" in payload
+    assert "techhive_db_ready 1" in payload
 
 
 def test_missing_route_returns_standard_error_shape(client):

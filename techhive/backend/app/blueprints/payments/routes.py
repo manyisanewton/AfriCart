@@ -1,11 +1,12 @@
 from flask import g, jsonify, request
 
 from app.blueprints.auth.helpers import validation_error
+from app.blueprints.notifications.push import create_notification
 from app.blueprints.payments import payments_bp
 from app.blueprints.payments.helpers import generate_payment_reference, serialize_payment
 from app.extensions import db
 from app.middleware.auth_required import auth_required
-from app.models import Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
+from app.models import NotificationType, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
 
 
 def _load_user_order(order_id: int, user_id: int):
@@ -60,6 +61,12 @@ def create_payment():
         currency=order.currency,
     )
     db.session.add(payment)
+    create_notification(
+        g.current_user.id,
+        NotificationType.PAYMENT_CREATED,
+        "Payment created",
+        f"Payment {payment.reference} has been created for order {order.order_number}.",
+    )
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)}), 201
 
@@ -108,6 +115,12 @@ def mark_payment_paid(payment_id: int):
     payment.status = PaymentStatus.PAID
     payment.order.status = OrderStatus.CONFIRMED
     payment.provider_response = "Payment marked as paid in local development flow."
+    create_notification(
+        g.current_user.id,
+        NotificationType.PAYMENT_PAID,
+        "Payment successful",
+        f"Payment {payment.reference} was marked as paid.",
+    )
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)})
 
@@ -134,5 +147,11 @@ def mark_payment_failed(payment_id: int):
 
     payment.status = PaymentStatus.FAILED
     payment.provider_response = "Payment marked as failed in local development flow."
+    create_notification(
+        g.current_user.id,
+        NotificationType.PAYMENT_FAILED,
+        "Payment failed",
+        f"Payment {payment.reference} was marked as failed.",
+    )
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)})

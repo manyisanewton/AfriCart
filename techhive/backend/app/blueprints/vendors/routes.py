@@ -11,6 +11,8 @@ from app.blueprints.vendors.schemas import (
 from app.extensions import db
 from app.middleware.role_required import role_required
 from app.models import Brand, Category, Order, OrderItem, Product, UserRole
+from app.services.analytics_service import vendor_summary, vendor_top_products
+from app.services.audit_service import log_audit_event
 
 
 def _vendor_profile_or_403():
@@ -32,6 +34,18 @@ def _vendor_profile_or_403():
 
 def _vendor_product_or_404(product_id: int, vendor_id: int):
     return Product.query.filter_by(id=product_id, vendor_id=vendor_id).first()
+
+
+def _add_vendor_audit_log(*, action: str, entity_id: int, metadata: dict | None = None) -> None:
+    db.session.add(
+        log_audit_event(
+            actor_user_id=g.current_user.id,
+            action=action,
+            entity_type="product",
+            entity_id=entity_id,
+            metadata=metadata,
+        )
+    )
 
 
 @vendors_bp.get("/profile")
@@ -138,6 +152,12 @@ def create_vendor_product():
         is_featured=payload["is_featured"],
     )
     db.session.add(product)
+    db.session.flush()
+    _add_vendor_audit_log(
+        action="vendor.product_created",
+        entity_id=product.id,
+        metadata={"slug": product.slug, "stock_quantity": product.stock_quantity},
+    )
     db.session.commit()
     return jsonify({"item": serialize_product(product, include_related=True)}), 201
 
@@ -167,6 +187,11 @@ def update_vendor_stock(product_id: int):
         return validation_error(payload["errors"])
 
     product.stock_quantity = payload["stock_quantity"]
+    _add_vendor_audit_log(
+        action="vendor.product_stock_updated",
+        entity_id=product.id,
+        metadata={"slug": product.slug, "stock_quantity": product.stock_quantity},
+    )
     db.session.commit()
     return jsonify({"item": serialize_product(product, include_related=True)})
 
@@ -198,3 +223,39 @@ def list_vendor_orders():
     return jsonify(
         {"items": [serialize_order(order, include_items=True) for order in orders]}
     )
+
+
+@vendors_bp.get("/analytics/summary")
+@role_required(UserRole.VENDOR.value)
+def get_vendor_summary():
+    """
+    Get summary analytics for the authenticated vendor.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Vendor summary analytics.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+    return jsonify({"item": vendor_summary(vendor.id)})
+
+
+@vendors_bp.get("/analytics/top-products")
+@role_required(UserRole.VENDOR.value)
+def get_vendor_top_products():
+    """
+    Get top-selling products for the authenticated vendor.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Vendor top products.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+    return jsonify({"items": vendor_top_products(vendor.id)})

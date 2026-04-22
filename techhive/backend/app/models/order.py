@@ -31,8 +31,19 @@ class Order(db.Model):
     )
     currency = db.Column(db.String(3), nullable=False, default="KES")
     subtotal = db.Column(db.Numeric(12, 2), nullable=False)
+    discount_amount = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    promo_code = db.Column(db.String(50), nullable=True)
     shipping_amount = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     total_amount = db.Column(db.Numeric(12, 2), nullable=False)
+    delivery_status = db.Column(db.String(40), nullable=False, default="processing")
+    tracking_token = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    delivery_zone_name = db.Column(db.String(120), nullable=True)
+    delivery_agent_id = db.Column(
+        db.Integer,
+        db.ForeignKey("delivery_agents.id"),
+        nullable=True,
+        index=True,
+    )
     shipping_name = db.Column(db.String(200), nullable=False)
     shipping_phone = db.Column(db.String(30), nullable=False)
     shipping_country = db.Column(db.String(100), nullable=False)
@@ -51,6 +62,7 @@ class Order(db.Model):
     )
 
     user = db.relationship("User", back_populates="orders")
+    delivery_agent = db.relationship("DeliveryAgent")
     items = db.relationship(
         "OrderItem",
         back_populates="order",
@@ -59,6 +71,12 @@ class Order(db.Model):
     )
     payments = db.relationship(
         "Payment",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    refunds = db.relationship(
+        "Refund",
         back_populates="order",
         cascade="all, delete-orphan",
         lazy="selectin",

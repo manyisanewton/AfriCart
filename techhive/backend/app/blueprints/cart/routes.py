@@ -37,6 +37,8 @@ def _cart_response(user_id: int):
             "summary": {
                 "items_count": sum(item.quantity for item in items),
                 "subtotal": f"{subtotal:.2f}",
+                "discount_amount": "0.00",
+                "total": f"{subtotal:.2f}",
             },
         }
     )

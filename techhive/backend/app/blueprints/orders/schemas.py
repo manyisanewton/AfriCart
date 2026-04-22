@@ -13,4 +13,13 @@ def validate_create_order_payload(payload: dict | None) -> dict:
     return {
         "address_id": address_id,
         "notes": str(notes).strip() if notes is not None else None,
+        "promo_code": str(data.get("promo_code") or "").strip().upper() or None,
     }
+
+
+def validate_refund_request_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    reason = str(data.get("reason", "")).strip()
+    if not reason:
+        return {"errors": {"reason": "reason is required."}}
+    return {"reason": reason}
