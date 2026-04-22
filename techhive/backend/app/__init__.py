@@ -3,6 +3,7 @@ import logging
 from flask import Flask, jsonify
 
 from app.blueprints.auth import auth_bp
+from app.blueprints.admin import admin_bp
 from app.blueprints.cart import cart_bp
 from app.blueprints.orders import orders_bp
 from app.blueprints.payments import payments_bp
@@ -50,6 +51,7 @@ def register_extensions(app: Flask) -> None:
 
 
 def register_routes(app: Flask) -> None:
+    app.register_blueprint(admin_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(cart_bp)
     app.register_blueprint(orders_bp)
