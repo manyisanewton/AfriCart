@@ -1,0 +1,200 @@
+from flask import g, jsonify, request
+
+from app.blueprints.auth.helpers import validation_error
+from app.blueprints.orders.helpers import serialize_order
+from app.blueprints.products.schemas import serialize_product
+from app.blueprints.vendors import vendors_bp
+from app.blueprints.vendors.schemas import (
+    validate_stock_payload,
+    validate_vendor_product_payload,
+)
+from app.extensions import db
+from app.middleware.role_required import role_required
+from app.models import Brand, Category, Order, OrderItem, Product, UserRole
+
+
+def _vendor_profile_or_403():
+    vendor = g.current_user.vendor_profile
+    if vendor is None:
+        return None, (
+            jsonify(
+                {
+                    "error": {
+                        "code": "vendor_profile_missing",
+                        "message": "Vendor profile is required for this action.",
+                    }
+                }
+            ),
+            403,
+        )
+    return vendor, None
+
+
+def _vendor_product_or_404(product_id: int, vendor_id: int):
+    return Product.query.filter_by(id=product_id, vendor_id=vendor_id).first()
+
+
+@vendors_bp.get("/profile")
+@role_required(UserRole.VENDOR.value)
+def get_vendor_profile():
+    """
+    Get the authenticated vendor profile.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Vendor profile details.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    return jsonify(
+        {
+            "item": {
+                "id": vendor.id,
+                "business_name": vendor.business_name,
+                "slug": vendor.slug,
+                "phone_number": vendor.phone_number,
+                "support_email": vendor.support_email,
+                "description": vendor.description,
+                "status": vendor.status.value,
+                "is_verified": vendor.is_verified,
+            }
+        }
+    )
+
+
+@vendors_bp.get("/products")
+@role_required(UserRole.VENDOR.value)
+def list_vendor_products():
+    """
+    List products owned by the authenticated vendor.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Vendor product list.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    products = (
+        Product.query.filter_by(vendor_id=vendor.id)
+        .order_by(Product.created_at.desc(), Product.id.desc())
+        .all()
+    )
+    return jsonify({"items": [serialize_product(product, include_related=True) for product in products]})
+
+
+@vendors_bp.post("/products")
+@role_required(UserRole.VENDOR.value)
+def create_vendor_product():
+    """
+    Create a product owned by the authenticated vendor.
+    ---
+    tags:
+      - Vendors
+    responses:
+      201:
+        description: Product created.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    payload = validate_vendor_product_payload(request.get_json(silent=True))
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    category = Category.query.filter_by(id=payload["category_id"], is_active=True).first()
+    if category is None:
+        return validation_error({"category_id": "Selected category was not found."})
+
+    brand = Brand.query.filter_by(id=payload["brand_id"], is_active=True).first()
+    if brand is None:
+        return validation_error({"brand_id": "Selected brand was not found."})
+
+    if Product.query.filter_by(slug=payload["slug"]).first():
+        return validation_error({"slug": "A product with that slug already exists."})
+    if Product.query.filter_by(sku=payload["sku"]).first():
+        return validation_error({"sku": "A product with that SKU already exists."})
+
+    product = Product(
+        vendor_id=vendor.id,
+        category_id=category.id,
+        brand_id=brand.id,
+        name=payload["name"],
+        slug=payload["slug"],
+        sku=payload["sku"],
+        short_description=payload["short_description"],
+        description=payload["description"],
+        price=payload["price"],
+        stock_quantity=payload["stock_quantity"],
+        is_active=payload["is_active"],
+        is_featured=payload["is_featured"],
+    )
+    db.session.add(product)
+    db.session.commit()
+    return jsonify({"item": serialize_product(product, include_related=True)}), 201
+
+
+@vendors_bp.patch("/products/<int:product_id>/stock")
+@role_required(UserRole.VENDOR.value)
+def update_vendor_stock(product_id: int):
+    """
+    Update stock quantity for a vendor-owned product.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Product stock updated.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    product = _vendor_product_or_404(product_id, vendor.id)
+    if product is None:
+        return jsonify({"error": {"code": "not_found", "message": "Product not found."}}), 404
+
+    payload = validate_stock_payload(request.get_json(silent=True))
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    product.stock_quantity = payload["stock_quantity"]
+    db.session.commit()
+    return jsonify({"item": serialize_product(product, include_related=True)})
+
+
+@vendors_bp.get("/orders")
+@role_required(UserRole.VENDOR.value)
+def list_vendor_orders():
+    """
+    List orders that contain products owned by the authenticated vendor.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Vendor order list.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    orders = (
+        Order.query.join(OrderItem, Order.items)
+        .join(Product, OrderItem.product)
+        .filter(Product.vendor_id == vendor.id)
+        .distinct()
+        .order_by(Order.created_at.desc(), Order.id.desc())
+        .all()
+    )
+    return jsonify(
+        {"items": [serialize_order(order, include_items=True) for order in orders]}
+    )
