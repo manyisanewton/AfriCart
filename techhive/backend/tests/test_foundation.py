@@ -50,6 +50,28 @@ def test_metrics_endpoint(client):
     assert "techhive_db_ready 1" in payload
 
 
+def test_security_headers_are_present(client):
+    response = client.get("/")
+
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+
+
+def test_default_cors_headers_are_present(client):
+    response = client.get("/", headers={"Origin": "https://example.com"})
+
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+    assert "Authorization" in response.headers["Access-Control-Allow-Headers"]
+
+
+def test_request_id_header_is_present(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"]
+
+
 def test_missing_route_returns_standard_error_shape(client):
     response = client.get("/missing")
 
@@ -68,3 +90,9 @@ def test_get_config_defaults_to_development():
 
 def test_get_config_returns_testing_class():
     assert get_config("testing") is TestingConfig
+
+
+def test_runtime_defaults_are_available_on_app_config(app):
+    assert app.config["HOST"] == "0.0.0.0"
+    assert app.config["PORT"] == 5000
+    assert app.config["GUNICORN_WORKERS"] == 2

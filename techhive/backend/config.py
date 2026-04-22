@@ -9,6 +9,8 @@ class Config:
     APP_NAME = "TechHive API"
     APP_VERSION = "0.1.0"
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+    HOST = os.getenv("HOST", "0.0.0.0")
+    PORT = int(os.getenv("PORT", "5000"))
     SQLALCHEMY_DATABASE_URI = os.getenv(
         "DATABASE_URL",
         f"sqlite:///{BASE_DIR / 'techhive.db'}",
@@ -32,6 +34,19 @@ class Config:
     DEBUG = False
     GUNICORN_TIMEOUT = int(os.getenv("GUNICORN_TIMEOUT", "60"))
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "*")
+    RATE_LIMIT_AUTH_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_AUTH_MAX_REQUESTS", "5"))
+    RATE_LIMIT_AUTH_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_AUTH_WINDOW_SECONDS", "60"))
+    SENTRY_DSN = os.getenv("SENTRY_DSN")
+    SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "development")
+    SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
+    GUNICORN_WORKERS = int(os.getenv("GUNICORN_WORKERS", "2"))
+    TASK_QUEUE_ENABLED = os.getenv("TASK_QUEUE_ENABLED", "false").lower() == "true"
+    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/1")
+    CELERY_TASK_ALWAYS_EAGER = (
+        os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true"
+    )
 
 
 class TestingConfig(Config):

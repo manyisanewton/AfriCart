@@ -14,21 +14,11 @@ from app.blueprints.products.schemas import (
 from app.middleware.auth_required import auth_required
 from app.models import Banner, Brand, Category, FlashSale, Product
 from app.services.recommendation_service import personalized_recommendations
+from app.utils.pagination import build_pagination_metadata, normalize_pagination
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _pagination_metadata(page: int, per_page: int, total: int) -> dict:
-    total_pages = (total + per_page - 1) // per_page if total else 0
-    return {
-        "page": page,
-        "per_page": per_page,
-        "total": total,
-        "total_pages": total_pages,
-    }
-
 
 @products_bp.get("/categories")
 def list_categories():
@@ -71,8 +61,10 @@ def list_products():
       200:
         description: Paginated product list.
     """
-    page = max(request.args.get("page", default=1, type=int), 1)
-    per_page = min(max(request.args.get("per_page", default=10, type=int), 1), 50)
+    page, per_page = normalize_pagination(
+        page=request.args.get("page", default=1, type=int),
+        per_page=request.args.get("per_page", default=10, type=int),
+    )
     category_slug = request.args.get("category")
     brand_slug = request.args.get("brand")
     featured = request.args.get("featured")
@@ -97,7 +89,11 @@ def list_products():
     return jsonify(
         {
             "items": [serialize_product(product) for product in pagination.items],
-            "pagination": _pagination_metadata(page, per_page, pagination.total),
+            "pagination": build_pagination_metadata(
+                page=page,
+                per_page=per_page,
+                total=pagination.total,
+            ),
         }
     )
 

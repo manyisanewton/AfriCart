@@ -15,7 +15,15 @@ from app.blueprints.promotions import promotions_bp
 from app.blueprints.reviews import reviews_bp
 from app.blueprints.vendors import vendors_bp
 from app.extensions import db, migrate, swagger
+from app.middleware.cors_handler import register_cors
 from app import models
+from app.celery_app import get_task_queue_status
+from app.services.error_monitoring_service import (
+    initialize_error_monitoring,
+    register_request_context,
+)
+from app.utils.constants import SECURITY_HEADERS
+from app.utils.error_handlers import register_error_handlers
 from config import get_config
 
 
@@ -25,6 +33,8 @@ def create_app(config_name: str | None = None) -> Flask:
 
     configure_logging(app)
     register_extensions(app)
+    register_security(app)
+    initialize_error_monitoring(app)
     register_routes(app)
     register_error_handlers(app)
 
@@ -53,6 +63,17 @@ def register_extensions(app: Flask) -> None:
         "schemes": ["http", "https"],
     }
     swagger.init_app(app)
+
+
+def register_security(app: Flask) -> None:
+    register_cors(app)
+    register_request_context(app)
+
+    @app.after_request
+    def add_security_headers(response):
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        return response
 
 
 def register_routes(app: Flask) -> None:
@@ -162,6 +183,25 @@ def register_routes(app: Flask) -> None:
         ]
         return app.response_class("\n".join(lines) + "\n", mimetype="text/plain; version=0.0.4")
 
+    @app.get("/workers/health")
+    def worker_health():
+        """
+        Background worker readiness endpoint.
+        ---
+        tags:
+          - System
+        responses:
+          200:
+            description: Worker configuration details.
+        """
+        return jsonify(
+            {
+                "status": "available",
+                "service": app.config["APP_NAME"],
+                "task_queue": get_task_queue_status(app),
+            }
+        )
+
     @app.get("/")
     def root():
         return jsonify(
@@ -171,36 +211,6 @@ def register_routes(app: Flask) -> None:
                 "health_url": "/health",
                 "readiness_url": "/ready",
                 "metrics_url": "/metrics",
+                "worker_health_url": "/workers/health",
             }
-        )
-
-
-def register_error_handlers(app: Flask) -> None:
-    @app.errorhandler(404)
-    def handle_not_found(error):
-        return (
-            jsonify(
-                {
-                    "error": {
-                        "code": "not_found",
-                        "message": "The requested resource was not found.",
-                    }
-                }
-            ),
-            404,
-        )
-
-    @app.errorhandler(500)
-    def handle_server_error(error):
-        app.logger.exception("Unhandled server error: %s", error)
-        return (
-            jsonify(
-                {
-                    "error": {
-                        "code": "internal_server_error",
-                        "message": "An unexpected error occurred.",
-                    }
-                }
-            ),
-            500,
         )

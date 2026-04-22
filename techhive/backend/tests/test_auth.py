@@ -130,3 +130,26 @@ def test_refresh_returns_new_access_token(client):
     payload = response.get_json()
     assert payload["access_token"]
     assert payload["token_type"] == "Bearer"
+
+
+def test_login_rate_limit_returns_429_after_threshold(client, app):
+    app.config["RATE_LIMIT_AUTH_MAX_REQUESTS"] = 2
+    create_existing_user()
+
+    response_one = client.post(
+        "/api/v1/auth/login",
+        json={"email": "existing@example.com", "password": "wrong-password"},
+    )
+    response_two = client.post(
+        "/api/v1/auth/login",
+        json={"email": "existing@example.com", "password": "wrong-password"},
+    )
+    response_three = client.post(
+        "/api/v1/auth/login",
+        json={"email": "existing@example.com", "password": "wrong-password"},
+    )
+
+    assert response_one.status_code == 401
+    assert response_two.status_code == 401
+    assert response_three.status_code == 429
+    assert response_three.get_json()["error"]["code"] == "rate_limit_exceeded"

@@ -10,11 +10,13 @@ from app.blueprints.auth.schemas import (
 )
 from app.extensions import db
 from app.middleware.auth_required import auth_required
+from app.middleware.rate_limiter import rate_limit
 from app.models import User
 from app.utils.security import create_access_token, decode_token, hash_password, verify_password
 
 
 @auth_bp.post("/register")
+@rate_limit("auth_register", "RATE_LIMIT_AUTH_MAX_REQUESTS", "RATE_LIMIT_AUTH_WINDOW_SECONDS")
 def register():
     """
     Register a new customer account.
@@ -72,6 +74,7 @@ def register():
 
 
 @auth_bp.post("/login")
+@rate_limit("auth_login", "RATE_LIMIT_AUTH_MAX_REQUESTS", "RATE_LIMIT_AUTH_WINDOW_SECONDS")
 def login():
     """
     Log in with email and password.
@@ -97,6 +100,7 @@ def login():
 
 
 @auth_bp.post("/refresh")
+@rate_limit("auth_refresh", "RATE_LIMIT_AUTH_MAX_REQUESTS", "RATE_LIMIT_AUTH_WINDOW_SECONDS")
 def refresh():
     """
     Refresh an access token using a refresh token.
