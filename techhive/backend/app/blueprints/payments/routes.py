@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from flask import current_app, g, jsonify, request
 
 from app.blueprints.auth.helpers import validation_error
@@ -8,14 +10,18 @@ from app.blueprints.payments.helpers import (
     generate_payment_reference,
     serialize_payment,
 )
+from app.blueprints.payments.mpesa import MpesaConfigurationError, MpesaGatewayError
 from app.blueprints.payments.webhooks import (
     apply_provider_webhook,
     initiate_provider_payment,
+    is_daraja_callback_payload,
+    should_accept_unsigned_mpesa_callback,
     verify_provider_webhook,
 )
 from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.models import NotificationType, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
+from app.services.payment_reconciliation_service import build_payment_reconciliation_deadline
 
 
 def _load_user_order(order_id: int, user_id: int):
@@ -73,20 +79,66 @@ def create_payment():
         amount=order.total_amount,
         currency=order.currency,
     )
+    if payment.method == PaymentMethod.MPESA:
+        payment.initiated_at = datetime.now(timezone.utc)
+        payment.reconciliation_due_at = build_payment_reconciliation_deadline(
+            current_app.config["MPESA_RECONCILIATION_TIMEOUT_MINUTES"]
+        )
     db.session.add(payment)
     db.session.flush()
 
-    provider_payload = initiate_provider_payment(
-        payment,
-        callback_base_url=current_app.config["PAYMENT_CALLBACK_BASE_URL"],
-        payload={"phone_number": phone_number},
-    )
+    try:
+        provider_payload = initiate_provider_payment(
+            payment,
+            callback_base_url=current_app.config["PAYMENT_CALLBACK_BASE_URL"],
+            payload={"phone_number": phone_number},
+        )
+    except MpesaConfigurationError as exc:
+        db.session.rollback()
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "payment_configuration_error",
+                        "message": str(exc),
+                    }
+                }
+            ),
+            503,
+        )
+    except MpesaGatewayError as exc:
+        payment.status = PaymentStatus.FAILED
+        payment.failure_code = "provider_request_failed"
+        payment.failure_message = str(exc)
+        payment.processed_at = datetime.now(timezone.utc)
+        payment.reconciliation_due_at = None
+        payment.provider_response = dump_provider_response(
+            {
+                "provider": payment.method.value,
+                "failure_code": payment.failure_code,
+                "failure_message": payment.failure_message,
+            }
+        )
+        db.session.commit()
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "payment_provider_unavailable",
+                        "message": str(exc),
+                    }
+                }
+            ),
+            502,
+        )
+
     payment.external_reference = (
         provider_payload.get("checkout_request_id")
         or provider_payload.get("payment_intent_id")
         or provider_payload.get("tx_ref")
         or provider_payload.get("order_id")
     )
+    payment.provider_event_id = provider_payload.get("merchant_request_id") or payment.provider_event_id
     payment.payer_phone_number = provider_payload.get("phone_number")
     payment.redirect_url = provider_payload.get("redirect_url")
     payment.provider_response = dump_provider_response(provider_payload)
@@ -203,11 +255,17 @@ def handle_payment_webhook(provider: str):
     raw_body = request.get_data(as_text=True)
     signature = request.headers.get("X-TechHive-Signature")
     event_id = request.headers.get("X-TechHive-Event-Id")
+    payload = request.get_json(silent=True) or {}
 
-    if not verify_provider_webhook(provider, raw_body, signature):
+    unsigned_daraja_callback = (
+        provider == PaymentMethod.MPESA.value
+        and not signature
+        and should_accept_unsigned_mpesa_callback(payload)
+    )
+
+    if not unsigned_daraja_callback and not verify_provider_webhook(provider, raw_body, signature):
         return jsonify({"error": {"code": "invalid_signature", "message": "Webhook signature is invalid."}}), 401
 
-    payload = request.get_json(silent=True) or {}
     payment, outcome = apply_provider_webhook(provider, event_id, payload)
     if payment is None:
         error_map = {
@@ -222,4 +280,13 @@ def handle_payment_webhook(provider: str):
         return jsonify({"error": {"code": outcome, "message": message}}), status_code
 
     db.session.commit()
+    if unsigned_daraja_callback or is_daraja_callback_payload(payload):
+        return jsonify(
+            {
+                "ResultCode": 0,
+                "ResultDesc": "Accepted",
+                "item": serialize_payment(payment),
+                "result": outcome,
+            }
+        )
     return jsonify({"item": serialize_payment(payment), "result": outcome})

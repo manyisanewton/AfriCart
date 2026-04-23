@@ -1,11 +1,20 @@
 import base64
 import json
 from datetime import datetime, timezone
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from flask import current_app
 
 from app.models import Payment
+
+
+class MpesaConfigurationError(ValueError):
+    pass
+
+
+class MpesaGatewayError(RuntimeError):
+    pass
 
 
 def _mpesa_timestamp() -> str:
@@ -23,6 +32,8 @@ def normalize_mpesa_phone_number(phone_number: str) -> str:
         value = value[1:]
     if value.startswith("0"):
         value = f"254{value[1:]}"
+    if not value.isdigit() or len(value) != 12 or not value.startswith("254"):
+        raise MpesaConfigurationError("Phone number must be a valid Kenyan MSISDN.")
     return value
 
 
@@ -51,6 +62,22 @@ def mpesa_is_configured() -> bool:
     return all(current_app.config.get(key) for key in required)
 
 
+def validate_mpesa_configuration(callback_base_url: str) -> None:
+    if not mpesa_is_configured():
+        if current_app.config.get("PAYMENTS_ALLOW_SIMULATION", True):
+            return
+        raise MpesaConfigurationError("M-Pesa credentials are incomplete.")
+
+    if not callback_base_url:
+        raise MpesaConfigurationError("PAYMENT_CALLBACK_BASE_URL must be configured.")
+
+    if (
+        not current_app.config.get("PAYMENTS_ALLOW_SIMULATION", True)
+        and not callback_base_url.startswith("https://")
+    ):
+        raise MpesaConfigurationError("PAYMENT_CALLBACK_BASE_URL must use HTTPS in strict mode.")
+
+
 def get_mpesa_access_token() -> str:
     consumer_key = current_app.config["MPESA_CONSUMER_KEY"]
     consumer_secret = current_app.config["MPESA_CONSUMER_SECRET"]
@@ -59,13 +86,101 @@ def get_mpesa_access_token() -> str:
         f"{current_app.config['MPESA_BASE_URL']}/oauth/v1/generate?grant_type=client_credentials",
         headers={"Authorization": f"Basic {token}"},
     )
-    with urlopen(request, timeout=15) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise MpesaGatewayError("Unable to obtain an M-Pesa access token.") from exc
     return payload["access_token"]
 
 
+def query_mpesa_payment_status(payment: Payment) -> dict:
+    if not payment.external_reference:
+        return {
+            "state": "manual_review",
+            "failure_code": "manual_review_required",
+            "failure_message": "The payment is missing a provider checkout reference.",
+            "raw": {"provider": "mpesa", "reason": "missing_checkout_request_id"},
+        }
+
+    if not mpesa_is_configured():
+        return {
+            "state": "pending",
+            "raw": {"provider": "mpesa", "simulated": True, "checkout_request_id": payment.external_reference},
+        }
+
+    timestamp = _mpesa_timestamp()
+    access_token = get_mpesa_access_token()
+    payload = {
+        "BusinessShortCode": current_app.config["MPESA_SHORTCODE"],
+        "Password": build_mpesa_password(
+            current_app.config["MPESA_SHORTCODE"],
+            current_app.config["MPESA_PASSKEY"],
+            timestamp,
+        ),
+        "Timestamp": timestamp,
+        "CheckoutRequestID": payment.external_reference,
+    }
+    request = Request(
+        f"{current_app.config['MPESA_BASE_URL']}/mpesa/stkpushquery/v1/query",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            mpesa_response = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise MpesaGatewayError("Unable to query the M-Pesa STK push status.") from exc
+
+    result_code = mpesa_response.get("ResultCode")
+    result_desc = str(mpesa_response.get("ResultDesc") or "").strip() or None
+    if result_code is None:
+        response_code = str(mpesa_response.get("ResponseCode") or "").strip()
+        if response_code == "0":
+            return {
+                "state": "pending",
+                "raw": mpesa_response,
+            }
+        return {
+            "state": "manual_review",
+            "failure_code": "manual_review_required",
+            "failure_message": (
+                str(mpesa_response.get("errorMessage") or mpesa_response.get("ResponseDescription") or "M-Pesa returned an incomplete status response.")
+            ),
+            "raw": mpesa_response,
+        }
+
+    result_code = int(result_code)
+    if result_code == 0:
+        return {
+            "state": "manual_review",
+            "failure_code": "manual_review_required",
+            "failure_message": "M-Pesa reports success, but callback proof is still missing.",
+            "raw": mpesa_response,
+        }
+
+    failure_code, failure_message = classify_mpesa_result_code(result_code, result_desc)
+    if failure_code == "request_timeout":
+        return {
+            "state": "pending",
+            "raw": mpesa_response,
+        }
+
+    return {
+        "state": "failed",
+        "failure_code": failure_code,
+        "failure_message": failure_message,
+        "raw": mpesa_response,
+    }
+
+
 def initiate_mpesa_payment(payment: Payment, callback_base_url: str, phone_number: str) -> dict:
-    callback_url = f"{callback_base_url}/mpesa"
+    validate_mpesa_configuration(callback_base_url)
+    callback_url = f"{callback_base_url.rstrip('/')}/mpesa"
     normalized_phone = normalize_mpesa_phone_number(phone_number)
 
     if not mpesa_is_configured():
@@ -106,8 +221,16 @@ def initiate_mpesa_payment(payment: Payment, callback_base_url: str, phone_numbe
         },
         method="POST",
     )
-    with urlopen(request, timeout=15) as response:
-        mpesa_response = json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request, timeout=15) as response:
+            mpesa_response = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise MpesaGatewayError("Unable to initiate the M-Pesa STK push request.") from exc
+
+    if str(mpesa_response.get("ResponseCode") or "").strip() != "0":
+        raise MpesaGatewayError(
+            str(mpesa_response.get("errorMessage") or mpesa_response.get("ResponseDescription") or "M-Pesa rejected the STK push request.")
+        )
 
     return {
         "provider": "mpesa",

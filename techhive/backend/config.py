@@ -5,6 +5,22 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 
+def load_environment(base_dir: Path = BASE_DIR) -> None:
+    env_path = base_dir / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
+
+
+load_environment()
+
+
 class Config:
     APP_NAME = "TechHive API"
     APP_VERSION = "0.1.0"
@@ -51,6 +67,25 @@ class Config:
     )
     MPESA_ACCOUNT_REFERENCE = os.getenv("MPESA_ACCOUNT_REFERENCE", "TechHive")
     MPESA_TRANSACTION_DESC = os.getenv("MPESA_TRANSACTION_DESC", "TechHive payment")
+    MPESA_ALLOW_UNSIGNED_CALLBACKS = (
+        os.getenv("MPESA_ALLOW_UNSIGNED_CALLBACKS", "true").lower() == "true"
+    )
+    MPESA_RECONCILIATION_TIMEOUT_MINUTES = int(
+        os.getenv("MPESA_RECONCILIATION_TIMEOUT_MINUTES", "15")
+    )
+    MPESA_RECONCILIATION_RETRY_DELAY_MINUTES = int(
+        os.getenv("MPESA_RECONCILIATION_RETRY_DELAY_MINUTES", "5")
+    )
+    MPESA_RECONCILIATION_MAX_ATTEMPTS = int(
+        os.getenv("MPESA_RECONCILIATION_MAX_ATTEMPTS", "2")
+    )
+    MPESA_RECONCILIATION_BATCH_LIMIT = int(
+        os.getenv("MPESA_RECONCILIATION_BATCH_LIMIT", "100")
+    )
+    MPESA_RECONCILIATION_SCHEDULE_MINUTES = int(
+        os.getenv("MPESA_RECONCILIATION_SCHEDULE_MINUTES", "5")
+    )
+    PAYMENTS_ALLOW_SIMULATION = os.getenv("PAYMENTS_ALLOW_SIMULATION", "true").lower() == "true"
     MPESA_WEBHOOK_SECRET = os.getenv("MPESA_WEBHOOK_SECRET", "mpesa-dev-secret")
     STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "stripe-dev-secret")
     FLUTTERWAVE_WEBHOOK_SECRET = os.getenv(
@@ -80,6 +115,7 @@ class Config:
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    PAYMENTS_ALLOW_SIMULATION = True
 
 
 class DevelopmentConfig(Config):
@@ -88,6 +124,8 @@ class DevelopmentConfig(Config):
 
 class ProductionConfig(Config):
     DEBUG = False
+    PAYMENTS_ALLOW_SIMULATION = False
+    MPESA_ALLOW_UNSIGNED_CALLBACKS = False
 
 
 config_by_name = {

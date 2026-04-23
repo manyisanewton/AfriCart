@@ -2,6 +2,7 @@ from app.tasks import (
     build_cleanup_summary,
     build_daily_sales_report,
     build_image_job_payload,
+    run_stale_mpesa_reconciliation,
     send_order_confirmation_email,
     send_payment_status_sms,
 )
@@ -14,6 +15,7 @@ def test_worker_health_endpoint(client):
     payload = response.get_json()
     assert payload["status"] == "available"
     assert payload["task_queue"]["broker_url"] == "redis://redis:6379/0"
+    assert payload["task_queue"]["schedules"]["payments.reconcile_stale_mpesa"]["interval_minutes"] == 5
 
 
 def test_root_exposes_worker_health_url(client):
@@ -35,6 +37,11 @@ def test_async_task_helpers_return_expected_payloads(app):
             order_number="TH-001",
             status="paid",
         )
+        reconciliation_payload = run_stale_mpesa_reconciliation(
+            limit=5,
+            max_attempts=2,
+            retry_delay_minutes=5,
+        )
 
     report_payload = build_daily_sales_report(total_orders=8, gross_sales="45000.00")
     cleanup_payload = build_cleanup_summary(cleaned_items=3, task_name="cleanup.notifications")
@@ -47,6 +54,7 @@ def test_async_task_helpers_return_expected_payloads(app):
     assert email_payload["template"] == "order_confirmation"
     assert sms_payload["channel"] == "sms"
     assert "TH-001" in sms_payload["message"]
+    assert reconciliation_payload["count"] == 0
     assert report_payload["total_orders"] == 8
     assert cleanup_payload["task_name"] == "cleanup.notifications"
     assert image_payload["transforms"] == ["thumbnail", "webp"]

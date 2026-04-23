@@ -41,6 +41,11 @@ def serialize_payment(payment: Payment) -> dict:
         "payer_phone_number": payment.payer_phone_number,
         "provider_receipt": payment.provider_receipt,
         "redirect_url": payment.redirect_url,
+        "initiated_at": payment.initiated_at.isoformat() if payment.initiated_at else None,
+        "reconciliation_due_at": (
+            payment.reconciliation_due_at.isoformat() if payment.reconciliation_due_at else None
+        ),
+        "reconciliation_attempts": payment.reconciliation_attempts,
         "failure_code": payment.failure_code,
         "failure_message": payment.failure_message,
         "provider_response": payment.provider_response,

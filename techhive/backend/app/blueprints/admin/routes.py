@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 
 from app.blueprints.auth.helpers import validation_error
 from app.blueprints.admin import admin_bp
@@ -25,6 +25,7 @@ from app.blueprints.products.schemas import (
     serialize_flash_sale,
     serialize_product,
 )
+from app.blueprints.payments.helpers import serialize_payment
 from app.extensions import db
 from app.middleware.role_required import role_required
 from app.models import (
@@ -48,6 +49,7 @@ from app.models import (
     VendorStatus,
 )
 from app.services.audit_service import log_audit_event, serialize_audit_log
+from app.services.payment_reconciliation_service import reconcile_stale_mpesa_payments
 from app.blueprints.vendors.schemas import serialize_vendor_kyc_submission
 
 
@@ -260,6 +262,59 @@ def update_vendor_kyc_status(submission_id: int):
     )
     db.session.commit()
     return jsonify({"item": serialize_vendor_kyc_submission(submission)})
+
+
+@admin_bp.post("/payments/reconcile-stale")
+@role_required(UserRole.ADMIN.value)
+def reconcile_stale_payments():
+    """
+    Reconcile stale pending M-Pesa payments that missed their callback window.
+    ---
+    tags:
+      - Admin
+    responses:
+      200:
+        description: Stale payments reconciled.
+    """
+    payload = request.get_json(silent=True) or {}
+    limit = payload.get("limit", current_app.config["MPESA_RECONCILIATION_BATCH_LIMIT"])
+
+    try:
+        limit = int(limit)
+        if limit <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return validation_error({"limit": "limit must be a positive integer."})
+
+    results = reconcile_stale_mpesa_payments(
+        limit=limit,
+        max_attempts=current_app.config["MPESA_RECONCILIATION_MAX_ATTEMPTS"],
+        retry_delay_minutes=current_app.config["MPESA_RECONCILIATION_RETRY_DELAY_MINUTES"],
+    )
+    payments = (
+        results["awaiting_confirmation"]
+        + results["provider_failed"]
+        + results["manual_review"]
+        + results["timed_out"]
+    )
+    for payment in payments:
+        _add_audit_log(
+            action="admin.payment_reconciled",
+            entity_type="payment",
+            entity_id=payment.id,
+            metadata={"reference": payment.reference, "failure_code": payment.failure_code},
+        )
+    db.session.commit()
+    return jsonify(
+        {
+            "count": len(payments),
+            "awaiting_confirmation_count": len(results["awaiting_confirmation"]),
+            "provider_failed_count": len(results["provider_failed"]),
+            "manual_review_count": len(results["manual_review"]),
+            "timed_out_count": len(results["timed_out"]),
+            "items": [serialize_payment(payment) for payment in payments],
+        }
+    )
 
 
 @admin_bp.post("/categories")

@@ -39,6 +39,20 @@ def verify_provider_webhook(provider: str, raw_body: str, signature: str | None)
     return verify_webhook_signature(secret, raw_body, signature)
 
 
+def is_daraja_callback_payload(payload: dict | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    callback = payload.get("Body", {}).get("stkCallback", {})
+    if not isinstance(callback, dict):
+        return False
+    required_keys = {"MerchantRequestID", "CheckoutRequestID", "ResultCode"}
+    return required_keys.issubset(callback.keys())
+
+
+def should_accept_unsigned_mpesa_callback(payload: dict | None) -> bool:
+    return current_app.config.get("MPESA_ALLOW_UNSIGNED_CALLBACKS", False) and is_daraja_callback_payload(payload)
+
+
 def apply_provider_webhook(provider: str, event_id: str | None, payload: dict) -> tuple[Payment | None, str]:
     normalized = normalize_provider_webhook(provider, payload, event_id)
     if normalized.get("error_code"):

@@ -23,6 +23,7 @@ from app.services.error_monitoring_service import (
     initialize_error_monitoring,
     register_request_context,
 )
+from app.services.payment_metrics_service import render_payment_metrics_lines
 from app.utils.constants import SECURITY_HEADERS
 from app.utils.error_handlers import register_error_handlers
 from config import get_config
@@ -183,6 +184,7 @@ def register_routes(app: Flask) -> None:
             "# TYPE techhive_db_ready gauge",
             f"techhive_db_ready {db_ready}",
         ]
+        lines.extend(render_payment_metrics_lines())
         return app.response_class("\n".join(lines) + "\n", mimetype="text/plain; version=0.0.4")
 
     @app.get("/workers/health")

@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
 from app.extensions import db
 from app.blueprints.payments import mpesa as mpesa_module
-from app.models import Address, Brand, Category, Product, User, UserRole, Vendor, VendorStatus
+from app.models import Address, Brand, Category, Payment, Product, User, UserRole, Vendor, VendorStatus
 from app.blueprints.payments.helpers import sign_webhook_payload
 from app.utils.security import hash_password
 
@@ -140,6 +142,9 @@ def test_create_mpesa_payment_returns_external_reference(client):
     item = response.get_json()["item"]
     assert item["method"] == "mpesa"
     assert item["external_reference"]
+    assert item["initiated_at"] is not None
+    assert item["reconciliation_due_at"] is not None
+    assert item["reconciliation_attempts"] == 0
 
 
 def test_list_payments_returns_created_payment(client):
@@ -284,6 +289,91 @@ def test_mpesa_client_uses_real_oauth_and_stk_push_when_configured(client, monke
     assert response.status_code == 201
     item = response.get_json()["item"]
     assert item["external_reference"] == "creq-456"
+    assert item["provider_event_id"] == "mreq-123"
+
+
+def test_mpesa_payment_rejects_invalid_phone_number(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+
+    response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "mpesa", "phone_number": "12345"},
+        headers=headers,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "payment_configuration_error"
+
+
+def test_mpesa_strict_mode_rejects_missing_credentials(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+    client.application.config["PAYMENTS_ALLOW_SIMULATION"] = False
+    client.application.config["MPESA_CONSUMER_KEY"] = None
+    client.application.config["MPESA_CONSUMER_SECRET"] = None
+    client.application.config["MPESA_SHORTCODE"] = None
+    client.application.config["MPESA_PASSKEY"] = None
+
+    response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "mpesa", "phone_number": "+254755000111"},
+        headers=headers,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "payment_configuration_error"
+
+
+def test_mpesa_gateway_failure_marks_request_failure(client, monkeypatch):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+
+    app = client.application
+    app.config["MPESA_CONSUMER_KEY"] = "consumer-key"
+    app.config["MPESA_CONSUMER_SECRET"] = "consumer-secret"
+    app.config["MPESA_SHORTCODE"] = "174379"
+    app.config["MPESA_PASSKEY"] = "pass-key"
+
+    def fake_urlopen(request, timeout=15):
+        raise mpesa_module.URLError("offline")
+
+    monkeypatch.setattr(mpesa_module, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "mpesa", "phone_number": "0712345678"},
+        headers=headers,
+    )
+
+    assert response.status_code == 502
+    assert response.get_json()["error"]["code"] == "payment_provider_unavailable"
+
+
+def test_metrics_endpoint_exposes_payment_observability(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+    payment_response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "mpesa", "phone_number": "+254755000111"},
+        headers=headers,
+    )
+    payment_id = payment_response.get_json()["item"]["id"]
+    payment = db.session.get(Payment, payment_id)
+    payment.failure_code = "awaiting_provider_confirmation"
+    payment.reconciliation_due_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.session.commit()
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    payload = response.get_data(as_text=True)
+    assert 'techhive_payments_total{method="mpesa",status="pending"} 1' in payload
+    assert (
+        'techhive_payment_reconciliation_total{state="awaiting_provider_confirmation"} 1'
+        in payload
+    )
+    assert "techhive_mpesa_pending_overdue_total 1" in payload
 
 
 def test_mpesa_callback_shape_marks_payment_paid(client):
@@ -328,6 +418,86 @@ def test_mpesa_callback_shape_marks_payment_paid(client):
     assert response.get_json()["item"]["status"] == "paid"
     assert response.get_json()["item"]["provider_receipt"] == "NLJ7RT61SV"
     assert response.get_json()["item"]["payer_phone_number"] == "254755000111"
+    assert response.get_json()["ResultCode"] == 0
+    assert response.get_json()["ResultDesc"] == "Accepted"
+
+
+def test_unsigned_daraja_callback_is_accepted_when_enabled(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+    payment_response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "mpesa", "phone_number": "+254755000111"},
+        headers=headers,
+    )
+    payment = payment_response.get_json()["item"]
+    payload = {
+        "Body": {
+            "stkCallback": {
+                "MerchantRequestID": "merchant-evt-daraja",
+                "CheckoutRequestID": payment["external_reference"],
+                "ResultCode": 0,
+                "ResultDesc": "The service request is processed successfully.",
+                "CallbackMetadata": {
+                    "Item": [
+                        {"Name": "Amount", "Value": 18500},
+                        {"Name": "MpesaReceiptNumber", "Value": "NLJ7RT61SX"},
+                        {"Name": "PhoneNumber", "Value": 254755000111},
+                    ]
+                },
+            }
+        }
+    }
+    import json
+
+    response = client.post(
+        "/api/v1/payments/webhooks/mpesa",
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["ResultCode"] == 0
+    assert response.get_json()["item"]["status"] == "paid"
+
+
+def test_unsigned_daraja_callback_is_rejected_when_disabled(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+    payment_response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "mpesa", "phone_number": "+254755000111"},
+        headers=headers,
+    )
+    payment = payment_response.get_json()["item"]
+    client.application.config["MPESA_ALLOW_UNSIGNED_CALLBACKS"] = False
+    payload = {
+        "Body": {
+            "stkCallback": {
+                "MerchantRequestID": "merchant-evt-nope",
+                "CheckoutRequestID": payment["external_reference"],
+                "ResultCode": 0,
+                "ResultDesc": "The service request is processed successfully.",
+                "CallbackMetadata": {
+                    "Item": [
+                        {"Name": "Amount", "Value": 18500},
+                        {"Name": "MpesaReceiptNumber", "Value": "NLJ7RT61SW"},
+                        {"Name": "PhoneNumber", "Value": 254755000111},
+                    ]
+                },
+            }
+        }
+    }
+    import json
+
+    response = client.post(
+        "/api/v1/payments/webhooks/mpesa",
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 401
+    assert response.get_json()["error"]["code"] == "invalid_signature"
 
 
 def test_mpesa_callback_rejects_amount_mismatch(client):
@@ -502,7 +672,20 @@ def test_mpesa_success_callback_requires_complete_metadata(client):
 
 def test_mpesa_callback_rejects_duplicate_receipt_for_other_payment(client):
     headers = auth_headers(client)
-    first_order = create_order_for_payment(client, headers)
+    address = create_address_for_registered_user()
+    product = create_payment_product()
+
+    client.post(
+        "/api/v1/cart/items",
+        json={"product_id": product.id, "quantity": 1},
+        headers=headers,
+    )
+    first_order_response = client.post(
+        "/api/v1/orders",
+        json={"address_id": address.id},
+        headers=headers,
+    )
+    first_order = first_order_response.get_json()["item"]
     first_payment_response = client.post(
         "/api/v1/payments",
         json={"order_id": first_order["id"], "method": "mpesa", "phone_number": "+254755000111"},
@@ -510,7 +693,17 @@ def test_mpesa_callback_rejects_duplicate_receipt_for_other_payment(client):
     )
     first_payment = first_payment_response.get_json()["item"]
 
-    second_order = create_order_for_payment(client, headers)
+    client.post(
+        "/api/v1/cart/items",
+        json={"product_id": product.id, "quantity": 1},
+        headers=headers,
+    )
+    second_order_response = client.post(
+        "/api/v1/orders",
+        json={"address_id": address.id},
+        headers=headers,
+    )
+    second_order = second_order_response.get_json()["item"]
     second_payment_response = client.post(
         "/api/v1/payments",
         json={"order_id": second_order["id"], "method": "mpesa", "phone_number": "+254755000111"},

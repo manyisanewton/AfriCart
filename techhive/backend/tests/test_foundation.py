@@ -1,3 +1,4 @@
+import config as config_module
 from config import DevelopmentConfig, TestingConfig, get_config
 
 
@@ -96,3 +97,14 @@ def test_runtime_defaults_are_available_on_app_config(app):
     assert app.config["HOST"] == "0.0.0.0"
     assert app.config["PORT"] == 5000
     assert app.config["GUNICORN_WORKERS"] == 2
+
+
+def test_dotenv_values_are_loaded(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("HOST=127.0.0.1\nPORT=5050\n", encoding="utf-8")
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    config_module.load_environment(tmp_path)
+
+    assert config_module.os.getenv("HOST") == "127.0.0.1"
+    assert config_module.os.getenv("PORT") == "5050"
