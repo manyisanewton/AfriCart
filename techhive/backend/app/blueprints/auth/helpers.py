@@ -1,7 +1,11 @@
 from flask import jsonify
 
 from app.models import User
-from app.utils.security import create_access_token, create_refresh_token
+from app.utils.security import (
+    create_access_token,
+    create_email_verification_token,
+    create_refresh_token,
+)
 
 
 def auth_error(message: str, status_code: int = 401):
@@ -35,6 +39,9 @@ def auth_response(user: User):
                 "access_token": create_access_token(user.id),
                 "refresh_token": create_refresh_token(user.id),
                 "token_type": "Bearer",
+            },
+            "verification": {
+                "email_verification_token": create_email_verification_token(user.id),
             },
         }
     )

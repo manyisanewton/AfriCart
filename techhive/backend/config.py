@@ -30,6 +30,34 @@ class Config:
     JWT_REFRESH_TOKEN_EXPIRES_DAYS = int(
         os.getenv("JWT_REFRESH_TOKEN_EXPIRES_DAYS", "7")
     )
+    PASSWORD_RESET_TOKEN_EXPIRES_MINUTES = int(
+        os.getenv("PASSWORD_RESET_TOKEN_EXPIRES_MINUTES", "30")
+    )
+    EMAIL_VERIFICATION_TOKEN_EXPIRES_HOURS = int(
+        os.getenv("EMAIL_VERIFICATION_TOKEN_EXPIRES_HOURS", "24")
+    )
+    PAYMENT_CALLBACK_BASE_URL = os.getenv(
+        "PAYMENT_CALLBACK_BASE_URL",
+        "http://localhost:5000/api/v1/payments/webhooks",
+    )
+    MPESA_BASE_URL = os.getenv("MPESA_BASE_URL", "https://sandbox.safaricom.co.ke")
+    MPESA_CONSUMER_KEY = os.getenv("MPESA_CONSUMER_KEY")
+    MPESA_CONSUMER_SECRET = os.getenv("MPESA_CONSUMER_SECRET")
+    MPESA_SHORTCODE = os.getenv("MPESA_SHORTCODE")
+    MPESA_PASSKEY = os.getenv("MPESA_PASSKEY")
+    MPESA_TRANSACTION_TYPE = os.getenv(
+        "MPESA_TRANSACTION_TYPE",
+        "CustomerPayBillOnline",
+    )
+    MPESA_ACCOUNT_REFERENCE = os.getenv("MPESA_ACCOUNT_REFERENCE", "TechHive")
+    MPESA_TRANSACTION_DESC = os.getenv("MPESA_TRANSACTION_DESC", "TechHive payment")
+    MPESA_WEBHOOK_SECRET = os.getenv("MPESA_WEBHOOK_SECRET", "mpesa-dev-secret")
+    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "stripe-dev-secret")
+    FLUTTERWAVE_WEBHOOK_SECRET = os.getenv(
+        "FLUTTERWAVE_WEBHOOK_SECRET",
+        "flutterwave-dev-secret",
+    )
+    PAYPAL_WEBHOOK_SECRET = os.getenv("PAYPAL_WEBHOOK_SECRET", "paypal-dev-secret")
     TESTING = False
     DEBUG = False
     GUNICORN_TIMEOUT = int(os.getenv("GUNICORN_TIMEOUT", "60"))

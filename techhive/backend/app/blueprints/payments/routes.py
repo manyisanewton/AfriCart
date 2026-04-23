@@ -1,9 +1,18 @@
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 
 from app.blueprints.auth.helpers import validation_error
 from app.blueprints.notifications.push import create_notification
 from app.blueprints.payments import payments_bp
-from app.blueprints.payments.helpers import generate_payment_reference, serialize_payment
+from app.blueprints.payments.helpers import (
+    dump_provider_response,
+    generate_payment_reference,
+    serialize_payment,
+)
+from app.blueprints.payments.webhooks import (
+    apply_provider_webhook,
+    initiate_provider_payment,
+    verify_provider_webhook,
+)
 from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.models import NotificationType, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
@@ -32,6 +41,7 @@ def create_payment():
     payload = request.get_json(silent=True) or {}
     order_id = payload.get("order_id")
     method = str(payload.get("method", PaymentMethod.MANUAL.value)).strip().lower()
+    phone_number = str(payload.get("phone_number") or "").strip() or None
 
     try:
         order_id = int(order_id)
@@ -43,6 +53,9 @@ def create_payment():
     allowed_methods = {member.value for member in PaymentMethod}
     if method not in allowed_methods:
         return validation_error({"method": "Unsupported payment method."})
+
+    if method == PaymentMethod.MPESA.value and not phone_number:
+        return validation_error({"phone_number": "phone_number is required for mpesa payments."})
 
     order = _load_user_order(order_id, g.current_user.id)
     if order is None:
@@ -61,6 +74,22 @@ def create_payment():
         currency=order.currency,
     )
     db.session.add(payment)
+    db.session.flush()
+
+    provider_payload = initiate_provider_payment(
+        payment,
+        callback_base_url=current_app.config["PAYMENT_CALLBACK_BASE_URL"],
+        payload={"phone_number": phone_number},
+    )
+    payment.external_reference = (
+        provider_payload.get("checkout_request_id")
+        or provider_payload.get("payment_intent_id")
+        or provider_payload.get("tx_ref")
+        or provider_payload.get("order_id")
+    )
+    payment.payer_phone_number = provider_payload.get("phone_number")
+    payment.redirect_url = provider_payload.get("redirect_url")
+    payment.provider_response = dump_provider_response(provider_payload)
     create_notification(
         g.current_user.id,
         NotificationType.PAYMENT_CREATED,
@@ -155,3 +184,42 @@ def mark_payment_failed(payment_id: int):
     )
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)})
+
+
+@payments_bp.post("/webhooks/<string:provider>")
+def handle_payment_webhook(provider: str):
+    """
+    Process signed provider webhooks.
+    ---
+    tags:
+      - Payments
+    responses:
+      200:
+        description: Webhook processed.
+      401:
+        description: Invalid signature.
+    """
+    provider = provider.strip().lower()
+    raw_body = request.get_data(as_text=True)
+    signature = request.headers.get("X-TechHive-Signature")
+    event_id = request.headers.get("X-TechHive-Event-Id")
+
+    if not verify_provider_webhook(provider, raw_body, signature):
+        return jsonify({"error": {"code": "invalid_signature", "message": "Webhook signature is invalid."}}), 401
+
+    payload = request.get_json(silent=True) or {}
+    payment, outcome = apply_provider_webhook(provider, event_id, payload)
+    if payment is None:
+        error_map = {
+            "payment_not_found": (404, "Payment not found."),
+            "invalid_order_state": (409, "Payment cannot be applied to the current order state."),
+            "amount_mismatch": (409, "Webhook amount does not match the payment."),
+            "phone_mismatch": (409, "Webhook phone number does not match the initiated payment."),
+            "duplicate_receipt": (409, "Webhook receipt was already used by another payment."),
+            "invalid_mpesa_metadata": (400, "M-Pesa callback metadata is incomplete."),
+        }
+        status_code, message = error_map.get(outcome, (400, "Webhook payload could not be processed."))
+        return jsonify({"error": {"code": outcome, "message": message}}), status_code
+
+    db.session.commit()
+    return jsonify({"item": serialize_payment(payment), "result": outcome})

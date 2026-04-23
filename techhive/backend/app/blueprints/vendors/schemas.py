@@ -63,3 +63,50 @@ def validate_stock_payload(payload: dict | None) -> dict:
         return {"errors": {"stock_quantity": "stock_quantity must be a non-negative integer."}}
 
     return {"stock_quantity": stock_quantity}
+
+
+def validate_vendor_kyc_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    required_fields = [
+        "legal_business_name",
+        "registration_number",
+        "contact_person_name",
+        "contact_person_id_number",
+        "document_url",
+    ]
+    errors = {}
+
+    for field in required_fields:
+        value = str(data.get(field, "")).strip()
+        if not value:
+            errors[field] = f"{field} is required."
+
+    if errors:
+        return {"errors": errors}
+
+    return {
+        "legal_business_name": str(data["legal_business_name"]).strip(),
+        "registration_number": str(data["registration_number"]).strip(),
+        "tax_id": str(data.get("tax_id") or "").strip() or None,
+        "contact_person_name": str(data["contact_person_name"]).strip(),
+        "contact_person_id_number": str(data["contact_person_id_number"]).strip(),
+        "document_url": str(data["document_url"]).strip(),
+    }
+
+
+def serialize_vendor_kyc_submission(submission) -> dict:
+    return {
+        "id": submission.id,
+        "vendor_id": submission.vendor_id,
+        "legal_business_name": submission.legal_business_name,
+        "registration_number": submission.registration_number,
+        "tax_id": submission.tax_id,
+        "contact_person_name": submission.contact_person_name,
+        "contact_person_id_number": submission.contact_person_id_number,
+        "document_url": submission.document_url,
+        "status": submission.status.value,
+        "admin_note": submission.admin_note,
+        "submitted_at": submission.submitted_at.isoformat(),
+        "reviewed_at": submission.reviewed_at.isoformat() if submission.reviewed_at else None,
+        "updated_at": submission.updated_at.isoformat(),
+    }

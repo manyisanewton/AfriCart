@@ -13,6 +13,7 @@ from app.blueprints.admin.schemas import (
     validate_refund_status_payload,
     validate_product_active_payload,
     validate_role_payload,
+    validate_vendor_kyc_status_payload,
     validate_vendor_status_payload,
 )
 from app.blueprints.orders.helpers import serialize_order, serialize_refund
@@ -42,9 +43,12 @@ from app.models import (
     User,
     UserRole,
     Vendor,
+    VendorKYCStatus,
+    VendorKYCSubmission,
     VendorStatus,
 )
 from app.services.audit_service import log_audit_event, serialize_audit_log
+from app.blueprints.vendors.schemas import serialize_vendor_kyc_submission
 
 
 def _not_found(message: str):
@@ -202,6 +206,60 @@ def update_vendor_status(vendor_id: int):
             }
         }
     )
+
+
+@admin_bp.get("/kyc-submissions")
+@role_required(UserRole.ADMIN.value)
+def list_vendor_kyc_submissions():
+    """
+    List vendor KYC submissions.
+    ---
+    tags:
+      - Admin
+    responses:
+      200:
+        description: Vendor KYC submissions list.
+    """
+    submissions = (
+        VendorKYCSubmission.query.order_by(
+            VendorKYCSubmission.submitted_at.desc(),
+            VendorKYCSubmission.id.desc(),
+        ).all()
+    )
+    return jsonify({"items": [serialize_vendor_kyc_submission(submission) for submission in submissions]})
+
+
+@admin_bp.patch("/kyc-submissions/<int:submission_id>/status")
+@role_required(UserRole.ADMIN.value)
+def update_vendor_kyc_status(submission_id: int):
+    """
+    Review and update vendor KYC status.
+    ---
+    tags:
+      - Admin
+    responses:
+      200:
+        description: Vendor KYC status updated.
+    """
+    payload = validate_vendor_kyc_status_payload(request.get_json(silent=True))
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    submission = db.session.get(VendorKYCSubmission, submission_id)
+    if submission is None:
+        return _not_found("KYC submission not found.")
+
+    submission.status = VendorKYCStatus(payload["status"])
+    submission.admin_note = payload["admin_note"]
+    submission.reviewed_at = datetime.now(timezone.utc)
+    _add_audit_log(
+        action="admin.vendor_kyc_status_updated",
+        entity_type="vendor_kyc_submission",
+        entity_id=submission.id,
+        metadata={"status": submission.status.value, "vendor_id": submission.vendor_id},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_vendor_kyc_submission(submission)})
 
 
 @admin_bp.post("/categories")

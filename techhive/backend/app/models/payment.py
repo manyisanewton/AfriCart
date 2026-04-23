@@ -18,6 +18,10 @@ class PaymentStatus(str, Enum):
 class PaymentMethod(str, Enum):
     MANUAL = "manual"
     CASH_ON_DELIVERY = "cash_on_delivery"
+    MPESA = "mpesa"
+    STRIPE = "stripe"
+    FLUTTERWAVE = "flutterwave"
+    PAYPAL = "paypal"
 
 
 class Payment(db.Model):
@@ -38,7 +42,15 @@ class Payment(db.Model):
     )
     amount = db.Column(db.Numeric(12, 2), nullable=False)
     currency = db.Column(db.String(3), nullable=False, default="KES")
+    external_reference = db.Column(db.String(120), nullable=True, unique=True, index=True)
+    provider_event_id = db.Column(db.String(120), nullable=True, unique=True, index=True)
+    payer_phone_number = db.Column(db.String(30), nullable=True)
+    provider_receipt = db.Column(db.String(120), nullable=True, unique=True, index=True)
+    redirect_url = db.Column(db.String(500), nullable=True)
+    failure_code = db.Column(db.String(80), nullable=True, index=True)
+    failure_message = db.Column(db.String(255), nullable=True)
     provider_response = db.Column(db.Text, nullable=True)
+    processed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
         db.DateTime(timezone=True),

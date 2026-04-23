@@ -75,6 +75,11 @@ def get_vendor_profile():
                 "description": vendor.description,
                 "status": vendor.status.value,
                 "is_verified": vendor.is_verified,
+                "kyc_status": (
+                    vendor.kyc_submission.status.value
+                    if vendor.kyc_submission is not None
+                    else "not_submitted"
+                ),
             }
         }
     )

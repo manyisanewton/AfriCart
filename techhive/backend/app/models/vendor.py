@@ -41,3 +41,9 @@ class Vendor(db.Model):
 
     user = db.relationship("User", back_populates="vendor_profile")
     products = db.relationship("Product", back_populates="vendor", lazy="selectin")
+    kyc_submission = db.relationship(
+        "VendorKYCSubmission",
+        back_populates="vendor",
+        uselist=False,
+        lazy="selectin",
+    )

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.models import OrderStatus, RefundStatus, UserRole, VendorStatus
+from app.models import OrderStatus, RefundStatus, UserRole, VendorKYCStatus, VendorStatus
 
 
 def validate_role_payload(payload: dict | None) -> dict:
@@ -97,6 +97,22 @@ def validate_refund_status_payload(payload: dict | None) -> dict:
     allowed_statuses = {status.value for status in RefundStatus}
     if status not in allowed_statuses:
         return {"errors": {"status": "status must be a supported refund status."}}
+    return {
+        "status": status,
+        "admin_note": str(data.get("admin_note") or "").strip() or None,
+    }
+
+
+def validate_vendor_kyc_status_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    status = str(data.get("status", "")).strip().lower()
+    allowed_statuses = {
+        VendorKYCStatus.PENDING.value,
+        VendorKYCStatus.APPROVED.value,
+        VendorKYCStatus.REJECTED.value,
+    }
+    if status not in allowed_statuses:
+        return {"errors": {"status": "status must be pending, approved, or rejected."}}
     return {
         "status": status,
         "admin_note": str(data.get("admin_note") or "").strip() or None,

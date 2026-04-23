@@ -1,6 +1,6 @@
 from app.extensions import db
 from app.models import User
-from app.utils.security import hash_password
+from app.utils.security import create_email_verification_token, create_password_reset_token, hash_password
 
 
 def create_existing_user():
@@ -153,3 +153,117 @@ def test_login_rate_limit_returns_429_after_threshold(client, app):
     assert response_two.status_code == 401
     assert response_three.status_code == 429
     assert response_three.get_json()["error"]["code"] == "rate_limit_exceeded"
+
+
+def test_logout_acknowledges_valid_refresh_token(client):
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "logout@example.com",
+            "password": "SecurePass123",
+            "first_name": "Logout",
+            "last_name": "User",
+        },
+    )
+    refresh_token = register_response.get_json()["tokens"]["refresh_token"]
+
+    response = client.post("/api/v1/auth/logout", json={"refresh_token": refresh_token})
+
+    assert response.status_code == 200
+    assert "Logout successful" in response.get_json()["message"]
+
+
+def test_change_password_updates_user_password(client):
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "change@example.com",
+            "password": "SecurePass123",
+            "first_name": "Change",
+            "last_name": "Password",
+        },
+    )
+    access_token = register_response.get_json()["tokens"]["access_token"]
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "SecurePass123", "new_password": "NewSecure456"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "change@example.com", "password": "NewSecure456"},
+    )
+    assert login_response.status_code == 200
+
+
+def test_forgot_password_returns_reset_token_for_existing_user(client):
+    create_existing_user()
+
+    response = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "existing@example.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["reset_token"]
+    assert response.get_json()["delivery"]["template"] == "password_reset"
+
+
+def test_reset_password_updates_credentials(client):
+    user = create_existing_user()
+    with client.application.app_context():
+        token = create_password_reset_token(user.id)
+
+    response = client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": token, "new_password": "ResetPass456"},
+    )
+
+    assert response.status_code == 200
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "existing@example.com", "password": "ResetPass456"},
+    )
+    assert login_response.status_code == 200
+
+
+def test_verify_email_marks_user_as_verified(client):
+    user = create_existing_user()
+    with client.application.app_context():
+        token = create_email_verification_token(user.id)
+
+    response = client.post(
+        "/api/v1/auth/verify-email",
+        json={"verification_token": token},
+    )
+
+    assert response.status_code == 200
+    refreshed_user = db.session.get(User, user.id)
+    assert refreshed_user.email_verified is True
+
+
+def test_resend_verification_returns_new_token(client):
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "verifyme@example.com",
+            "password": "SecurePass123",
+            "first_name": "Verify",
+            "last_name": "Again",
+        },
+    )
+    access_token = register_response.get_json()["tokens"]["access_token"]
+
+    response = client.post(
+        "/api/v1/auth/resend-verification",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["verification_token"]
+    assert response.get_json()["delivery"]["template"] == "email_verification"

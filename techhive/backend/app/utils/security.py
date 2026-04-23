@@ -37,6 +37,22 @@ def create_refresh_token(user_id: int) -> str:
     return jwt.encode(payload, current_app.config["JWT_SECRET_KEY"], algorithm="HS256")
 
 
+def create_password_reset_token(user_id: int) -> str:
+    expires = timedelta(
+        minutes=current_app.config["PASSWORD_RESET_TOKEN_EXPIRES_MINUTES"]
+    )
+    payload = _token_payload(user_id, "password_reset", expires)
+    return jwt.encode(payload, current_app.config["JWT_SECRET_KEY"], algorithm="HS256")
+
+
+def create_email_verification_token(user_id: int) -> str:
+    expires = timedelta(
+        hours=current_app.config["EMAIL_VERIFICATION_TOKEN_EXPIRES_HOURS"]
+    )
+    payload = _token_payload(user_id, "email_verification", expires)
+    return jwt.encode(payload, current_app.config["JWT_SECRET_KEY"], algorithm="HS256")
+
+
 def decode_token(token: str) -> dict:
     return jwt.decode(
         token,

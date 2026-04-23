@@ -20,6 +20,7 @@ from app.models.refund import Refund, RefundStatus
 from app.models.review import Review
 from app.models.user import User, UserRole
 from app.models.vendor import Vendor, VendorStatus
+from app.models.vendor_kyc import VendorKYCStatus, VendorKYCSubmission
 from app.models.wishlist import WishlistItem
 
 
@@ -53,6 +54,8 @@ __all__ = [
     "User",
     "UserRole",
     "Vendor",
+    "VendorKYCStatus",
+    "VendorKYCSubmission",
     "VendorStatus",
     "WishlistItem",
 ]

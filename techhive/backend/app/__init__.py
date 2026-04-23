@@ -3,6 +3,7 @@ import logging
 from flask import Flask, jsonify
 from sqlalchemy import text
 
+from app.blueprints.addresses import addresses_bp
 from app.blueprints.auth import auth_bp
 from app.blueprints.admin import admin_bp
 from app.blueprints.cart import cart_bp
@@ -78,6 +79,7 @@ def register_security(app: Flask) -> None:
 
 def register_routes(app: Flask) -> None:
     app.register_blueprint(admin_bp)
+    app.register_blueprint(addresses_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(cart_bp)
     app.register_blueprint(delivery_bp)
