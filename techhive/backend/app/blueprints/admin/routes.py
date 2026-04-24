@@ -6,13 +6,18 @@ from app.blueprints.auth.helpers import validation_error
 from app.blueprints.admin import admin_bp
 from app.blueprints.admin.schemas import (
     validate_banner_payload,
+    validate_banner_update_payload,
     validate_flash_sale_payload,
+    validate_flash_sale_update_payload,
     validate_named_entity_payload,
+    validate_named_entity_update_payload,
     validate_order_status_payload,
     validate_promo_code_payload,
+    validate_promo_code_update_payload,
     validate_refund_status_payload,
     validate_product_active_payload,
     validate_role_payload,
+    validate_user_active_payload,
     validate_vendor_kyc_status_payload,
     validate_vendor_status_payload,
 )
@@ -49,6 +54,19 @@ from app.models import (
     VendorStatus,
 )
 from app.services.audit_service import log_audit_event, serialize_audit_log
+from app.services.admin_resource_service import (
+    delete_banner,
+    delete_brand,
+    delete_category,
+    delete_flash_sale,
+    delete_promo_code,
+    update_banner,
+    update_brand,
+    update_category,
+    update_flash_sale,
+    update_promo_code,
+    update_user_active,
+)
 from app.services.catalog_validation_service import (
     ensure_unique_brand_slug,
     ensure_unique_category_slug,
@@ -145,6 +163,36 @@ def update_user_role(user_id: int):
             }
         }
     )
+
+
+@admin_bp.patch("/users/<int:user_id>/active")
+@role_required(UserRole.ADMIN.value)
+def update_user_active_state(user_id: int):
+    """
+    Activate or deactivate a user account.
+    ---
+    tags:
+      - Admin
+    responses:
+      200:
+        description: User activity state updated.
+    """
+    payload = validate_user_active_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    user, error = update_user_active(user_id=user_id, is_active=payload["is_active"])
+    if error:
+        return _not_found("User not found.")
+
+    _add_audit_log(
+        action="admin.user_active_updated",
+        entity_type="user",
+        entity_id=user.id,
+        metadata={"is_active": user.is_active, "email": user.email},
+    )
+    db.session.commit()
+    return jsonify({"item": {"id": user.id, "email": user.email, "is_active": user.is_active}})
 
 
 @admin_bp.get("/vendors")
@@ -360,6 +408,48 @@ def create_category():
     return jsonify({"item": serialize_category(category)}), 201
 
 
+@admin_bp.patch("/categories/<int:category_id>")
+@role_required(UserRole.ADMIN.value)
+def update_category_detail(category_id: int):
+    payload = validate_named_entity_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    category, error = update_category(category_id=category_id, payload=payload)
+    if error:
+        if error.status_code == 404:
+            return _not_found("Category not found.")
+        return validation_error(error.details)
+
+    _add_audit_log(
+        action="admin.category_updated",
+        entity_type="category",
+        entity_id=category.id,
+        metadata={"name": category.name, "slug": category.slug, "is_active": category.is_active},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_category(category)})
+
+
+@admin_bp.delete("/categories/<int:category_id>")
+@role_required(UserRole.ADMIN.value)
+def remove_category(category_id: int):
+    category, error = delete_category(category_id=category_id)
+    if error:
+        if error.status_code == 404:
+            return _not_found("Category not found.")
+        return validation_error(error.details)
+
+    _add_audit_log(
+        action="admin.category_deleted",
+        entity_type="category",
+        entity_id=category.id,
+        metadata={"name": category.name, "slug": category.slug},
+    )
+    db.session.commit()
+    return jsonify({"message": "Category deleted successfully."})
+
+
 @admin_bp.post("/brands")
 @role_required(UserRole.ADMIN.value)
 def create_brand():
@@ -397,6 +487,48 @@ def create_brand():
     )
     db.session.commit()
     return jsonify({"item": serialize_brand(brand)}), 201
+
+
+@admin_bp.patch("/brands/<int:brand_id>")
+@role_required(UserRole.ADMIN.value)
+def update_brand_detail(brand_id: int):
+    payload = validate_named_entity_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    brand, error = update_brand(brand_id=brand_id, payload=payload)
+    if error:
+        if error.status_code == 404:
+            return _not_found("Brand not found.")
+        return validation_error(error.details)
+
+    _add_audit_log(
+        action="admin.brand_updated",
+        entity_type="brand",
+        entity_id=brand.id,
+        metadata={"name": brand.name, "slug": brand.slug, "is_active": brand.is_active},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_brand(brand)})
+
+
+@admin_bp.delete("/brands/<int:brand_id>")
+@role_required(UserRole.ADMIN.value)
+def remove_brand(brand_id: int):
+    brand, error = delete_brand(brand_id=brand_id)
+    if error:
+        if error.status_code == 404:
+            return _not_found("Brand not found.")
+        return validation_error(error.details)
+
+    _add_audit_log(
+        action="admin.brand_deleted",
+        entity_type="brand",
+        entity_id=brand.id,
+        metadata={"name": brand.name, "slug": brand.slug},
+    )
+    db.session.commit()
+    return jsonify({"message": "Brand deleted successfully."})
 
 
 @admin_bp.get("/products")
@@ -547,6 +679,44 @@ def create_banner():
     return jsonify({"item": serialize_banner(banner)}), 201
 
 
+@admin_bp.patch("/banners/<int:banner_id>")
+@role_required(UserRole.ADMIN.value)
+def update_banner_detail(banner_id: int):
+    payload = validate_banner_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    banner, error = update_banner(banner_id=banner_id, payload=payload)
+    if error:
+        return _not_found("Banner not found.")
+
+    _add_audit_log(
+        action="admin.banner_updated",
+        entity_type="banner",
+        entity_id=banner.id,
+        metadata={"title": banner.title, "placement": banner.placement},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_banner(banner)})
+
+
+@admin_bp.delete("/banners/<int:banner_id>")
+@role_required(UserRole.ADMIN.value)
+def remove_banner(banner_id: int):
+    banner, error = delete_banner(banner_id=banner_id)
+    if error:
+        return _not_found("Banner not found.")
+
+    _add_audit_log(
+        action="admin.banner_deleted",
+        entity_type="banner",
+        entity_id=banner.id,
+        metadata={"title": banner.title},
+    )
+    db.session.commit()
+    return jsonify({"message": "Banner deleted successfully."})
+
+
 @admin_bp.post("/promo-codes")
 @role_required(UserRole.ADMIN.value)
 def create_promo_code():
@@ -584,6 +754,49 @@ def create_promo_code():
     )
     db.session.commit()
     return jsonify({"item": serialize_promo_code(promo_code)}), 201
+
+
+@admin_bp.patch("/promo-codes/<int:promo_code_id>")
+@role_required(UserRole.ADMIN.value)
+def update_promo_code_detail(promo_code_id: int):
+    payload = validate_promo_code_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    if "discount_type" in payload.get("provided_fields", set()):
+        payload["discount_type"] = PromoCodeType(payload["discount_type"])
+
+    promo_code, error = update_promo_code(promo_code_id=promo_code_id, payload=payload)
+    if error:
+        if error.status_code == 404:
+            return _not_found("Promo code not found.")
+        return validation_error(error.details)
+
+    _add_audit_log(
+        action="admin.promo_code_updated",
+        entity_type="promo_code",
+        entity_id=promo_code.id,
+        metadata={"code": promo_code.code, "is_active": promo_code.is_active},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_promo_code(promo_code)})
+
+
+@admin_bp.delete("/promo-codes/<int:promo_code_id>")
+@role_required(UserRole.ADMIN.value)
+def remove_promo_code(promo_code_id: int):
+    promo_code, error = delete_promo_code(promo_code_id=promo_code_id)
+    if error:
+        return _not_found("Promo code not found.")
+
+    _add_audit_log(
+        action="admin.promo_code_deleted",
+        entity_type="promo_code",
+        entity_id=promo_code.id,
+        metadata={"code": promo_code.code},
+    )
+    db.session.commit()
+    return jsonify({"message": "Promo code deleted successfully."})
 
 
 @admin_bp.get("/flash-sales")
@@ -640,6 +853,50 @@ def create_flash_sale():
     )
     db.session.commit()
     return jsonify({"item": serialize_flash_sale(flash_sale)}), 201
+
+
+@admin_bp.patch("/flash-sales/<int:flash_sale_id>")
+@role_required(UserRole.ADMIN.value)
+def update_flash_sale_detail(flash_sale_id: int):
+    payload = validate_flash_sale_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    if "product_id" in payload.get("provided_fields", set()):
+        product, product_error = get_product_for_flash_sale(payload["product_id"])
+        if product_error:
+            return validation_error(product_error.details)
+        payload["product_id"] = product.id
+
+    flash_sale, error = update_flash_sale(flash_sale_id=flash_sale_id, payload=payload)
+    if error:
+        return _not_found("Flash sale not found.")
+
+    _add_audit_log(
+        action="admin.flash_sale_updated",
+        entity_type="flash_sale",
+        entity_id=flash_sale.id,
+        metadata={"title": flash_sale.title, "product_id": flash_sale.product_id},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_flash_sale(flash_sale)})
+
+
+@admin_bp.delete("/flash-sales/<int:flash_sale_id>")
+@role_required(UserRole.ADMIN.value)
+def remove_flash_sale(flash_sale_id: int):
+    flash_sale, error = delete_flash_sale(flash_sale_id=flash_sale_id)
+    if error:
+        return _not_found("Flash sale not found.")
+
+    _add_audit_log(
+        action="admin.flash_sale_deleted",
+        entity_type="flash_sale",
+        entity_id=flash_sale.id,
+        metadata={"title": flash_sale.title},
+    )
+    db.session.commit()
+    return jsonify({"message": "Flash sale deleted successfully."})
 
 
 @admin_bp.patch("/orders/<int:order_id>/status")

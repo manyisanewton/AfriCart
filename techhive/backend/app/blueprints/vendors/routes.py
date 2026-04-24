@@ -7,6 +7,7 @@ from app.blueprints.vendors import vendors_bp
 from app.blueprints.vendors.schemas import (
     validate_stock_payload,
     validate_vendor_product_payload,
+    validate_vendor_product_update_payload,
 )
 from app.extensions import db
 from app.middleware.role_required import role_required
@@ -19,6 +20,11 @@ from app.services.catalog_validation_service import (
     get_active_category,
 )
 from app.utils.api import get_json_payload, not_found_response
+from app.services.vendor_product_service import (
+    delete_vendor_product,
+    get_vendor_product,
+    update_vendor_product,
+)
 
 
 def _vendor_profile_or_403():
@@ -115,6 +121,28 @@ def list_vendor_products():
     return jsonify({"items": [serialize_product(product, include_related=True) for product in products]})
 
 
+@vendors_bp.get("/products/<int:product_id>")
+@role_required(UserRole.VENDOR.value)
+def get_vendor_product_detail(product_id: int):
+    """
+    Get a vendor-owned product detail.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Vendor product detail.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    product = get_vendor_product(vendor_id=vendor.id, product_id=product_id)
+    if product is None:
+        return not_found_response("Product not found.")
+    return jsonify({"item": serialize_product(product, include_related=True)})
+
+
 @vendors_bp.post("/products")
 @role_required(UserRole.VENDOR.value)
 def create_vendor_product():
@@ -175,6 +203,45 @@ def create_vendor_product():
     return jsonify({"item": serialize_product(product, include_related=True)}), 201
 
 
+@vendors_bp.patch("/products/<int:product_id>")
+@role_required(UserRole.VENDOR.value)
+def update_vendor_product_detail(product_id: int):
+    """
+    Update a vendor-owned product.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Product updated.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    payload = validate_vendor_product_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    product, service_error = update_vendor_product(
+        vendor=vendor,
+        product_id=product_id,
+        payload=payload,
+    )
+    if service_error is not None:
+        if service_error.status_code == 404:
+            return not_found_response("Product not found.")
+        return validation_error(service_error.details)
+
+    _add_vendor_audit_log(
+        action="vendor.product_updated",
+        entity_id=product.id,
+        metadata={"slug": product.slug, "stock_quantity": product.stock_quantity},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_product(product, include_related=True)})
+
+
 @vendors_bp.patch("/products/<int:product_id>/stock")
 @role_required(UserRole.VENDOR.value)
 def update_vendor_stock(product_id: int):
@@ -207,6 +274,37 @@ def update_vendor_stock(product_id: int):
     )
     db.session.commit()
     return jsonify({"item": serialize_product(product, include_related=True)})
+
+
+@vendors_bp.delete("/products/<int:product_id>")
+@role_required(UserRole.VENDOR.value)
+def remove_vendor_product(product_id: int):
+    """
+    Delete a vendor-owned product if it has no order history.
+    ---
+    tags:
+      - Vendors
+    responses:
+      200:
+        description: Product deleted.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    product, service_error = delete_vendor_product(vendor=vendor, product_id=product_id)
+    if service_error is not None:
+        if service_error.status_code == 404:
+            return not_found_response("Product not found.")
+        return validation_error(service_error.details)
+
+    _add_vendor_audit_log(
+        action="vendor.product_deleted",
+        entity_id=product.id,
+        metadata={"slug": product.slug},
+    )
+    db.session.commit()
+    return jsonify({"message": "Product deleted successfully."})
 
 
 @vendors_bp.get("/orders")

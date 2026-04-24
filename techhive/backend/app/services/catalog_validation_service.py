@@ -51,6 +51,29 @@ def ensure_unique_product_slug_and_sku(*, slug: str, sku: str) -> ValidationLook
     return None
 
 
+def ensure_unique_product_slug_and_sku_for_update(
+    *,
+    slug: str | None,
+    sku: str | None,
+    product_id: int,
+) -> ValidationLookupError | None:
+    if slug is not None:
+        duplicate_slug = Product.query.filter(
+            Product.slug == slug,
+            Product.id != product_id,
+        ).first()
+        if duplicate_slug is not None:
+            return ValidationLookupError({"slug": "A product with that slug already exists."})
+    if sku is not None:
+        duplicate_sku = Product.query.filter(
+            Product.sku == sku,
+            Product.id != product_id,
+        ).first()
+        if duplicate_sku is not None:
+            return ValidationLookupError({"sku": "A product with that SKU already exists."})
+    return None
+
+
 def ensure_unique_promo_code(code: str) -> ValidationLookupError | None:
     if PromoCode.query.filter_by(code=code).first():
         return ValidationLookupError({"code": "A promo code with that code already exists."})

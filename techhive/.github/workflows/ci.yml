@@ -29,5 +29,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Verify code compiles
+        run: python -m compileall app tests
+
+      - name: Verify migrations apply
+        run: flask --app run.py db upgrade
+
       - name: Run tests
-        run: pytest
+        run: pytest -q

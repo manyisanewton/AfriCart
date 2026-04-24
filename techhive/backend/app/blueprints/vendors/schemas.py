@@ -53,6 +53,105 @@ def validate_vendor_product_payload(payload: dict | None) -> dict:
     }
 
 
+def validate_vendor_product_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    errors = {}
+    normalized = {}
+
+    field_names = {
+        "name",
+        "slug",
+        "sku",
+        "category_id",
+        "brand_id",
+        "price",
+        "stock_quantity",
+        "short_description",
+        "description",
+        "is_active",
+        "is_featured",
+    }
+    provided_fields = {field for field in field_names if field in data}
+
+    if not provided_fields:
+        return {"errors": {"product": "At least one product field must be provided."}}
+
+    if "name" in provided_fields:
+        name = str(data.get("name", "")).strip()
+        if not name:
+            errors["name"] = "name cannot be blank."
+        else:
+            normalized["name"] = name
+
+    if "slug" in provided_fields:
+        slug = str(data.get("slug", "")).strip()
+        if not slug:
+            errors["slug"] = "slug cannot be blank."
+        else:
+            normalized["slug"] = slug
+
+    if "sku" in provided_fields:
+        sku = str(data.get("sku", "")).strip()
+        if not sku:
+            errors["sku"] = "sku cannot be blank."
+        else:
+            normalized["sku"] = sku
+
+    if "category_id" in provided_fields:
+        try:
+            category_id = int(data.get("category_id"))
+            if category_id <= 0:
+                raise ValueError
+            normalized["category_id"] = category_id
+        except (TypeError, ValueError):
+            errors["category_id"] = "category_id must be a positive integer."
+
+    if "brand_id" in provided_fields:
+        try:
+            brand_id = int(data.get("brand_id"))
+            if brand_id <= 0:
+                raise ValueError
+            normalized["brand_id"] = brand_id
+        except (TypeError, ValueError):
+            errors["brand_id"] = "brand_id must be a positive integer."
+
+    if "price" in provided_fields:
+        try:
+            price = float(data.get("price"))
+            if price < 0:
+                raise ValueError
+            normalized["price"] = price
+        except (TypeError, ValueError):
+            errors["price"] = "price must be a non-negative number."
+
+    if "stock_quantity" in provided_fields:
+        try:
+            stock_quantity = int(data.get("stock_quantity"))
+            if stock_quantity < 0:
+                raise ValueError
+            normalized["stock_quantity"] = stock_quantity
+        except (TypeError, ValueError):
+            errors["stock_quantity"] = "stock_quantity must be a non-negative integer."
+
+    if "short_description" in provided_fields:
+        normalized["short_description"] = str(data.get("short_description") or "").strip() or None
+
+    if "description" in provided_fields:
+        normalized["description"] = str(data.get("description") or "").strip() or None
+
+    if "is_active" in provided_fields:
+        normalized["is_active"] = bool(data.get("is_active"))
+
+    if "is_featured" in provided_fields:
+        normalized["is_featured"] = bool(data.get("is_featured"))
+
+    if errors:
+        return {"errors": errors}
+
+    normalized["provided_fields"] = provided_fields
+    return normalized
+
+
 def validate_stock_payload(payload: dict | None) -> dict:
     data = payload or {}
     try:

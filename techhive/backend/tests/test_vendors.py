@@ -153,6 +153,159 @@ def test_vendor_can_update_owned_product_stock(client):
     assert response.get_json()["item"]["stock_quantity"] == 21
 
 
+def test_vendor_can_get_owned_product_detail(client):
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
+    category, brand = create_catalog_dependencies()
+    product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
+        name="Xiaomi Band Pro",
+        slug="xiaomi-band-pro",
+        sku="XIAOMI-BAND-PRO",
+        price=11000,
+        stock_quantity=7,
+    )
+
+    response = client.get(f"/api/v1/vendor/products/{product.id}", headers=headers)
+
+    assert response.status_code == 200
+    assert response.get_json()["item"]["slug"] == "xiaomi-band-pro"
+
+
+def test_vendor_can_update_owned_product_details(client):
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
+    category, brand = create_catalog_dependencies()
+    product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
+        name="Xiaomi Pad 6",
+        slug="xiaomi-pad-6",
+        sku="XIAOMI-PAD-6",
+        price=54000,
+        stock_quantity=4,
+        short_description="Tablet",
+    )
+
+    response = client.patch(
+        f"/api/v1/vendor/products/{product.id}",
+        json={
+            "name": "Xiaomi Pad 6 Pro",
+            "slug": "xiaomi-pad-6-pro",
+            "sku": "XIAOMI-PAD-6-PRO",
+            "price": 62000,
+            "is_featured": True,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    item = response.get_json()["item"]
+    assert item["name"] == "Xiaomi Pad 6 Pro"
+    assert item["slug"] == "xiaomi-pad-6-pro"
+    assert item["sku"] == "XIAOMI-PAD-6-PRO"
+    assert item["price"] == "62000.00"
+    assert item["is_featured"] is True
+
+
+def test_vendor_update_rejects_duplicate_sku(client):
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
+    category, brand = create_catalog_dependencies()
+    first_product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
+        name="Xiaomi Router Mini",
+        slug="xiaomi-router-mini",
+        sku="XIAOMI-ROUTER-MINI",
+        price=7000,
+        stock_quantity=5,
+    )
+    second_product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
+        name="Xiaomi Router Max",
+        slug="xiaomi-router-max",
+        sku="XIAOMI-ROUTER-MAX",
+        price=15000,
+        stock_quantity=2,
+    )
+
+    response = client.patch(
+        f"/api/v1/vendor/products/{second_product.id}",
+        json={"sku": first_product.sku},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["sku"] == "A product with that SKU already exists."
+
+
+def test_vendor_can_delete_product_without_order_history(client):
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
+    category, brand = create_catalog_dependencies()
+    product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
+        name="Xiaomi Hub",
+        slug="xiaomi-hub",
+        sku="XIAOMI-HUB",
+        price=9000,
+        stock_quantity=6,
+    )
+
+    response = client.delete(f"/api/v1/vendor/products/{product.id}", headers=headers)
+
+    assert response.status_code == 200
+    assert response.get_json()["message"] == "Product deleted successfully."
+    assert db.session.get(Product, product.id) is None
+
+
+def test_vendor_delete_rejects_product_with_order_history(client):
+    customer_headers = register_customer_headers(client)
+    vendor_headers, vendor = create_vendor_user_and_headers_wrapper(client)
+    category, brand = create_catalog_dependencies()
+    product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
+        name="Xiaomi Router AX1500",
+        slug="xiaomi-router-ax1500",
+        sku="XIAOMI-AX1500",
+        price=16000,
+        stock_quantity=6,
+    )
+    customer = User.query.filter_by(email="customer-vendor-test@example.com").first()
+    address = create_address_for_user(
+        customer,
+        recipient_name="Customer User",
+        phone_number="+254766000111",
+        address_line_1="Tom Mboya Street",
+    )
+    cart_response = client.post(
+        "/api/v1/cart/items",
+        json={"product_id": product.id, "quantity": 1},
+        headers=customer_headers,
+    )
+    assert cart_response.status_code == 201
+    order_response = client.post(
+        "/api/v1/orders",
+        json={"address_id": address.id},
+        headers=customer_headers,
+    )
+    assert order_response.status_code == 201
+
+    response = client.delete(f"/api/v1/vendor/products/{product.id}", headers=vendor_headers)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["product"] == (
+        "Products that are part of existing orders cannot be deleted."
+    )
+
+
 def test_vendor_orders_only_include_vendor_products(client):
     customer_headers = register_customer_headers(client)
     customer = User.query.filter_by(email="customer-vendor-test@example.com").first()

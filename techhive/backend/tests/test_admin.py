@@ -141,6 +141,21 @@ def test_admin_can_update_user_role(client):
     assert response.get_json()["item"]["role"] == "vendor"
 
 
+def test_admin_can_update_user_active_state(client):
+    headers = create_admin_headers(client)
+    create_customer_headers(client)
+    user = User.query.filter_by(email="plain-user@example.com").first()
+
+    response = client.patch(
+        f"/api/v1/admin/users/{user.id}/active",
+        json={"is_active": False},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["item"]["is_active"] is False
+
+
 def test_admin_can_approve_vendor(client):
     headers = create_admin_headers(client)
     vendor_user, vendor = create_vendor_fixture()
@@ -172,6 +187,72 @@ def test_admin_can_create_category_and_brand(client):
 
     assert category_response.status_code == 201
     assert brand_response.status_code == 201
+
+
+def test_admin_can_update_and_delete_category(client):
+    headers = create_admin_headers(client)
+    create_response = client.post(
+        "/api/v1/admin/categories",
+        json={"name": "Storage", "slug": "storage"},
+        headers=headers,
+    )
+    category_id = create_response.get_json()["item"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/admin/categories/{category_id}",
+        json={"name": "Storage Devices", "is_active": False},
+        headers=headers,
+    )
+    delete_response = client.delete(
+        f"/api/v1/admin/categories/{category_id}",
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["name"] == "Storage Devices"
+    assert update_response.get_json()["item"]["is_active"] is False
+    assert delete_response.status_code == 200
+
+
+def test_admin_cannot_delete_category_with_products(client):
+    headers = create_admin_headers(client)
+    _vendor_user, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+
+    response = client.delete(
+        f"/api/v1/admin/categories/{product.category_id}",
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["category"] == (
+        "Categories with products cannot be deleted."
+    )
+
+
+def test_admin_can_update_and_delete_brand(client):
+    headers = create_admin_headers(client)
+    create_response = client.post(
+        "/api/v1/admin/brands",
+        json={"name": "SanDisk", "slug": "sandisk"},
+        headers=headers,
+    )
+    brand_id = create_response.get_json()["item"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/admin/brands/{brand_id}",
+        json={"name": "SanDisk Pro", "website_url": "https://example.com"},
+        headers=headers,
+    )
+    delete_response = client.delete(
+        f"/api/v1/admin/brands/{brand_id}",
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["name"] == "SanDisk Pro"
+    assert update_response.get_json()["item"]["website_url"] == "https://example.com"
+    assert delete_response.status_code == 200
 
 
 def test_admin_rejects_duplicate_category_slug(client):
@@ -233,6 +314,101 @@ def test_admin_can_deactivate_product(client):
 
     assert response.status_code == 200
     assert response.get_json()["item"]["is_active"] is False
+
+
+def test_admin_can_update_and_delete_banner(client):
+    headers = create_admin_headers(client)
+    create_response = client.post(
+        "/api/v1/admin/banners",
+        json={
+            "title": "Launch Banner",
+            "image_url": "https://example.com/banner.jpg",
+            "placement": "homepage",
+            "sort_order": 1,
+        },
+        headers=headers,
+    )
+    banner_id = create_response.get_json()["item"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/admin/banners/{banner_id}",
+        json={"title": "Updated Banner", "is_active": False},
+        headers=headers,
+    )
+    delete_response = client.delete(
+        f"/api/v1/admin/banners/{banner_id}",
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["title"] == "Updated Banner"
+    assert update_response.get_json()["item"]["is_active"] is False
+    assert delete_response.status_code == 200
+
+
+def test_admin_can_update_and_delete_promo_code(client):
+    headers = create_admin_headers(client)
+    create_response = client.post(
+        "/api/v1/admin/promo-codes",
+        json={
+            "code": "SAVE10",
+            "discount_type": "percentage",
+            "discount_value": 10,
+        },
+        headers=headers,
+    )
+    promo_code_id = create_response.get_json()["item"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/admin/promo-codes/{promo_code_id}",
+        json={"code": "SAVE15", "discount_value": 15, "is_active": False},
+        headers=headers,
+    )
+    delete_response = client.delete(
+        f"/api/v1/admin/promo-codes/{promo_code_id}",
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["code"] == "SAVE15"
+    assert update_response.get_json()["item"]["discount_value"] == "15.00"
+    assert update_response.get_json()["item"]["is_active"] is False
+    assert delete_response.status_code == 200
+
+
+def test_admin_can_update_and_delete_flash_sale(client):
+    headers = create_admin_headers(client)
+    _vendor_user, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+    now = datetime.now(timezone.utc)
+    create_response = client.post(
+        "/api/v1/admin/flash-sales",
+        json={
+            "title": "Weekend Rush",
+            "product_id": product.id,
+            "sale_price": 14999,
+            "starts_at": now.isoformat(),
+            "ends_at": (now + timedelta(days=2)).isoformat(),
+            "is_active": True,
+        },
+        headers=headers,
+    )
+    flash_sale_id = create_response.get_json()["item"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/admin/flash-sales/{flash_sale_id}",
+        json={"title": "Weekend Rush Extended", "is_active": False},
+        headers=headers,
+    )
+    delete_response = client.delete(
+        f"/api/v1/admin/flash-sales/{flash_sale_id}",
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["title"] == "Weekend Rush Extended"
+    assert update_response.get_json()["item"]["is_active"] is False
+    assert delete_response.status_code == 200
 
 
 def test_admin_can_update_order_status(client):
