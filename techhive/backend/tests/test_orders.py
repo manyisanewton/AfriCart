@@ -1,76 +1,62 @@
-from app.extensions import db
-from app.models import Address, Brand, Category, Product, User, UserRole, Vendor, VendorStatus
-from app.utils.security import hash_password
+from app.models import User
+from tests.factories import (
+    create_address_for_user,
+    create_catalog_dependencies,
+    create_product,
+    create_vendor_user_and_headers,
+    register_user_and_headers,
+)
 
 
 def auth_headers(client):
-    register_response = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "order-user@example.com",
-            "password": "SecurePass123",
-            "first_name": "Order",
-            "last_name": "User",
-            "phone_number": "+254744000111",
-        },
+    headers, _user = register_user_and_headers(
+        client,
+        email="order-user@example.com",
+        first_name="Order",
+        last_name="User",
+        phone_number="+254744000111",
     )
-    token = register_response.get_json()["tokens"]["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    return headers
 
 
 def create_address_for_registered_user():
     user = User.query.filter_by(email="order-user@example.com").first()
-    address = Address(
-        user_id=user.id,
-        label="Home",
+    return create_address_for_user(
+        user,
         recipient_name="Order User",
         phone_number="+254744000111",
-        country="Kenya",
-        city="Nairobi",
         state_or_county="Nairobi County",
         postal_code="00100",
         address_line_1="Kenyatta Avenue",
-        is_default=True,
     )
-    db.session.add(address)
-    db.session.commit()
-    return address
-
-
-def create_order_product():
-    vendor_user = User(
+def create_order_product_with_client(client):
+    _vendor_headers, vendor = create_vendor_user_and_headers(
+        client,
         email="vendor-order@example.com",
-        password_hash=hash_password("SecurePass123"),
         first_name="Vendor",
         last_name="Orders",
         phone_number="+254744000222",
-        role=UserRole.VENDOR,
-    )
-    vendor = Vendor(
-        user=vendor_user,
         business_name="Orders Tech",
         slug="orders-tech",
-        phone_number="+254744000222",
         support_email="support@orderstech.com",
-        status=VendorStatus.APPROVED,
-        is_verified=True,
     )
-    category = Category(name="Tablets", slug="tablets")
-    brand = Brand(name="Lenovo", slug="lenovo")
-    product = Product(
+    category, brand = create_catalog_dependencies(
+        category_name="Tablets",
+        category_slug="tablets",
+        brand_name="Lenovo",
+        brand_slug="lenovo",
+    )
+    return create_product(
         vendor=vendor,
         category=category,
         brand=brand,
-        name='Lenovo Tab P12',
-        slug='lenovo-tab-p12',
-        sku='LENOVO-TAB-P12',
+        name="Lenovo Tab P12",
+        slug="lenovo-tab-p12",
+        sku="LENOVO-TAB-P12",
         price=42000.00,
         stock_quantity=4,
         is_active=True,
     )
-    db.session.add_all([vendor_user, vendor, category, brand, product])
-    db.session.commit()
-    return product
 
 
 def add_item_to_cart(client, headers, product_id, quantity=1):
@@ -84,7 +70,7 @@ def add_item_to_cart(client, headers, product_id, quantity=1):
 def test_create_order_from_cart(client):
     headers = auth_headers(client)
     address = create_address_for_registered_user()
-    product = create_order_product()
+    product = create_order_product_with_client(client)
     add_item_to_cart(client, headers, product.id, quantity=2)
 
     response = client.post(
@@ -117,7 +103,7 @@ def test_create_order_rejects_empty_cart(client):
 def test_list_orders_returns_created_order(client):
     headers = auth_headers(client)
     address = create_address_for_registered_user()
-    product = create_order_product()
+    product = create_order_product_with_client(client)
     add_item_to_cart(client, headers, product.id, quantity=1)
     client.post("/api/v1/orders", json={"address_id": address.id}, headers=headers)
 
@@ -132,7 +118,7 @@ def test_list_orders_returns_created_order(client):
 def test_get_order_returns_order_detail(client):
     headers = auth_headers(client)
     address = create_address_for_registered_user()
-    product = create_order_product()
+    product = create_order_product_with_client(client)
     create_response = client.post(
         "/api/v1/cart/items",
         json={"product_id": product.id, "quantity": 1},
@@ -155,7 +141,7 @@ def test_get_order_returns_order_detail(client):
 def test_cancel_pending_order(client):
     headers = auth_headers(client)
     address = create_address_for_registered_user()
-    product = create_order_product()
+    product = create_order_product_with_client(client)
     add_item_to_cart(client, headers, product.id, quantity=1)
     order_response = client.post(
         "/api/v1/orders",

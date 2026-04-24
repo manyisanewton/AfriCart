@@ -1,11 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.models import Order
 
 
 def generate_order_number() -> str:
-    return f"TH-{datetime.utcnow():%Y%m%d%H%M%S%f}"
+    return f"TH-{datetime.now(timezone.utc):%Y%m%d%H%M%S%f}"
 
 
 def serialize_order_item(item) -> dict:

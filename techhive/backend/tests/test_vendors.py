@@ -1,57 +1,35 @@
 from app.extensions import db
-from app.models import Address, Brand, Category, Product, User, UserRole, Vendor, VendorStatus
-from app.utils.security import hash_password
+from app.models import Address, Product, User
+from tests.factories import (
+    create_address_for_user,
+    create_catalog_dependencies,
+    create_product,
+    create_customer_headers,
+    create_vendor_user_and_headers,
+)
 
 
 def register_customer_headers(client):
-    response = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "customer-vendor-test@example.com",
-            "password": "SecurePass123",
-            "first_name": "Customer",
-            "last_name": "User",
-            "phone_number": "+254766000111",
-        },
+    return create_customer_headers(
+        client,
+        email="customer-vendor-test@example.com",
+        first_name="Customer",
+        last_name="User",
+        phone_number="+254766000111",
     )
-    token = response.get_json()["tokens"]["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
-def create_vendor_user_and_headers(client):
-    response = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "vendor-slice@example.com",
-            "password": "SecurePass123",
-            "first_name": "Vendor",
-            "last_name": "Slice",
-            "phone_number": "+254766000222",
-        },
-    )
-    user = User.query.filter_by(email="vendor-slice@example.com").first()
-    user.role = UserRole.VENDOR
-    vendor = Vendor(
-        user_id=user.id,
+def create_vendor_user_and_headers_wrapper(client):
+    return create_vendor_user_and_headers(
+        client,
+        email="vendor-slice@example.com",
+        first_name="Vendor",
+        last_name="Slice",
+        phone_number="+254766000222",
         business_name="Slice Vendor",
         slug="slice-vendor",
-        phone_number="+254766000222",
         support_email="support@vendor-slice.com",
-        status=VendorStatus.APPROVED,
-        is_verified=True,
     )
-    db.session.add(vendor)
-    db.session.commit()
-    token = response.get_json()["tokens"]["access_token"]
-    return {"Authorization": f"Bearer {token}"}, vendor
-
-
-def create_catalog_dependencies():
-    category = Category(name="Wearables", slug="wearables")
-    brand = Brand(name="Xiaomi", slug="xiaomi")
-    db.session.add_all([category, brand])
-    db.session.commit()
-    return category, brand
 
 
 def test_customer_cannot_access_vendor_profile(client):
@@ -63,7 +41,7 @@ def test_customer_cannot_access_vendor_profile(client):
 
 
 def test_vendor_profile_returns_profile_details(client):
-    headers, vendor = create_vendor_user_and_headers(client)
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
 
     response = client.get("/api/v1/vendor/profile", headers=headers)
 
@@ -72,7 +50,7 @@ def test_vendor_profile_returns_profile_details(client):
 
 
 def test_vendor_can_create_product(client):
-    headers, vendor = create_vendor_user_and_headers(client)
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
     category, brand = create_catalog_dependencies()
 
     response = client.post(
@@ -94,21 +72,54 @@ def test_vendor_can_create_product(client):
     assert response.get_json()["item"]["vendor"]["id"] == vendor.id
 
 
-def test_vendor_can_list_owned_products(client):
-    headers, vendor = create_vendor_user_and_headers(client)
+def test_vendor_create_product_rejects_duplicate_slug(client):
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
     category, brand = create_catalog_dependencies()
-    product = Product(
+    existing = Product(
         vendor_id=vendor.id,
         category_id=category.id,
         brand_id=brand.id,
+        name="Xiaomi Smart Band 8",
+        slug="xiaomi-smart-band-8",
+        sku="XIAOMI-BAND-8",
+        price=7500,
+        stock_quantity=5,
+    )
+    db.session.add(existing)
+    db.session.commit()
+
+    response = client.post(
+        "/api/v1/vendor/products",
+        json={
+            "name": "Another Xiaomi Band",
+            "slug": "xiaomi-smart-band-8",
+            "sku": "XIAOMI-BAND-8-PRO",
+            "category_id": category.id,
+            "brand_id": brand.id,
+            "price": 9100,
+            "stock_quantity": 9,
+            "short_description": "Duplicate slug test",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["slug"] == "A product with that slug already exists."
+
+
+def test_vendor_can_list_owned_products(client):
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
+    category, brand = create_catalog_dependencies()
+    product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
         name="Xiaomi Watch 2",
         slug="xiaomi-watch-2",
         sku="XIAOMI-WATCH-2",
         price=23000,
         stock_quantity=3,
     )
-    db.session.add(product)
-    db.session.commit()
 
     response = client.get("/api/v1/vendor/products", headers=headers)
 
@@ -119,20 +130,18 @@ def test_vendor_can_list_owned_products(client):
 
 
 def test_vendor_can_update_owned_product_stock(client):
-    headers, vendor = create_vendor_user_and_headers(client)
+    headers, vendor = create_vendor_user_and_headers_wrapper(client)
     category, brand = create_catalog_dependencies()
-    product = Product(
-        vendor_id=vendor.id,
-        category_id=category.id,
-        brand_id=brand.id,
+    product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
         name="Xiaomi Buds 5",
         slug="xiaomi-buds-5",
         sku="XIAOMI-BUDS-5",
         price=12000,
         stock_quantity=8,
     )
-    db.session.add(product)
-    db.session.commit()
 
     response = client.patch(
         f"/api/v1/vendor/products/{product.id}/stock",
@@ -147,32 +156,25 @@ def test_vendor_can_update_owned_product_stock(client):
 def test_vendor_orders_only_include_vendor_products(client):
     customer_headers = register_customer_headers(client)
     customer = User.query.filter_by(email="customer-vendor-test@example.com").first()
-    address = Address(
-        user_id=customer.id,
-        label="Home",
+    address = create_address_for_user(
+        customer,
         recipient_name="Customer User",
         phone_number="+254766000111",
-        country="Kenya",
-        city="Nairobi",
         address_line_1="Tom Mboya Street",
-        is_default=True,
     )
-    db.session.add(address)
 
-    vendor_headers, vendor = create_vendor_user_and_headers(client)
+    vendor_headers, vendor = create_vendor_user_and_headers_wrapper(client)
     category, brand = create_catalog_dependencies()
-    product = Product(
-        vendor_id=vendor.id,
-        category_id=category.id,
-        brand_id=brand.id,
+    product = create_product(
+        vendor=vendor,
+        category=category,
+        brand=brand,
         name="Xiaomi Router AX3000",
         slug="xiaomi-router-ax3000",
         sku="XIAOMI-AX3000",
         price=15000,
         stock_quantity=6,
     )
-    db.session.add(product)
-    db.session.commit()
 
     cart_response = client.post(
         "/api/v1/cart/items",

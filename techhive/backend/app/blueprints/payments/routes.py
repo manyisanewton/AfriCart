@@ -1,35 +1,24 @@
-from datetime import datetime, timezone
-
 from flask import current_app, g, jsonify, request
 
 from app.blueprints.auth.helpers import validation_error
-from app.blueprints.notifications.push import create_notification
 from app.blueprints.payments import payments_bp
-from app.blueprints.payments.helpers import (
-    dump_provider_response,
-    generate_payment_reference,
-    serialize_payment,
-)
-from app.blueprints.payments.mpesa import MpesaConfigurationError, MpesaGatewayError
+from app.blueprints.payments.helpers import serialize_payment
 from app.blueprints.payments.webhooks import (
     apply_provider_webhook,
-    initiate_provider_payment,
     is_daraja_callback_payload,
     should_accept_unsigned_mpesa_callback,
     verify_provider_webhook,
 )
 from app.extensions import db
 from app.middleware.auth_required import auth_required
-from app.models import NotificationType, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
-from app.services.payment_reconciliation_service import build_payment_reconciliation_deadline
-
-
-def _load_user_order(order_id: int, user_id: int):
-    return Order.query.filter_by(id=order_id, user_id=user_id).first()
-
-
-def _payment_not_found():
-    return jsonify({"error": {"code": "not_found", "message": "Payment not found."}}), 404
+from app.models import Order, Payment, PaymentMethod
+from app.services.payment_service import (
+    apply_failed_state,
+    apply_paid_state,
+    create_payment_for_order,
+    get_user_payment,
+)
+from app.utils.api import get_json_payload, not_found_response
 
 
 @payments_bp.post("")
@@ -44,112 +33,24 @@ def create_payment():
       201:
         description: Payment created.
     """
-    payload = request.get_json(silent=True) or {}
-    order_id = payload.get("order_id")
+    payload = get_json_payload()
     method = str(payload.get("method", PaymentMethod.MANUAL.value)).strip().lower()
     phone_number = str(payload.get("phone_number") or "").strip() or None
-
-    try:
-        order_id = int(order_id)
-        if order_id <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        return validation_error({"order_id": "order_id must be a positive integer."})
-
-    allowed_methods = {member.value for member in PaymentMethod}
-    if method not in allowed_methods:
-        return validation_error({"method": "Unsupported payment method."})
-
-    if method == PaymentMethod.MPESA.value and not phone_number:
-        return validation_error({"phone_number": "phone_number is required for mpesa payments."})
-
-    order = _load_user_order(order_id, g.current_user.id)
-    if order is None:
-        return validation_error({"order_id": "Order was not found."})
-
-    existing = Payment.query.filter_by(order_id=order.id, status=PaymentStatus.PENDING).first()
-    if existing is not None:
-        return jsonify({"item": serialize_payment(existing)}), 200
-
-    payment = Payment(
-        order_id=order.id,
-        reference=generate_payment_reference(),
-        method=PaymentMethod(method),
-        status=PaymentStatus.PENDING,
-        amount=order.total_amount,
-        currency=order.currency,
+    payment, error, status_code = create_payment_for_order(
+        user_id=g.current_user.id,
+        order_id=payload.get("order_id"),
+        method=method,
+        phone_number=phone_number,
+        callback_base_url=current_app.config["PAYMENT_CALLBACK_BASE_URL"],
+        reconciliation_timeout_minutes=current_app.config["MPESA_RECONCILIATION_TIMEOUT_MINUTES"],
     )
-    if payment.method == PaymentMethod.MPESA:
-        payment.initiated_at = datetime.now(timezone.utc)
-        payment.reconciliation_due_at = build_payment_reconciliation_deadline(
-            current_app.config["MPESA_RECONCILIATION_TIMEOUT_MINUTES"]
-        )
-    db.session.add(payment)
-    db.session.flush()
+    if error:
+        if error.code == "validation_error":
+            return validation_error(error.details or {"payment": error.message})
+        return jsonify({"error": {"code": error.code, "message": error.message}}), error.status_code
 
-    try:
-        provider_payload = initiate_provider_payment(
-            payment,
-            callback_base_url=current_app.config["PAYMENT_CALLBACK_BASE_URL"],
-            payload={"phone_number": phone_number},
-        )
-    except MpesaConfigurationError as exc:
-        db.session.rollback()
-        return (
-            jsonify(
-                {
-                    "error": {
-                        "code": "payment_configuration_error",
-                        "message": str(exc),
-                    }
-                }
-            ),
-            503,
-        )
-    except MpesaGatewayError as exc:
-        payment.status = PaymentStatus.FAILED
-        payment.failure_code = "provider_request_failed"
-        payment.failure_message = str(exc)
-        payment.processed_at = datetime.now(timezone.utc)
-        payment.reconciliation_due_at = None
-        payment.provider_response = dump_provider_response(
-            {
-                "provider": payment.method.value,
-                "failure_code": payment.failure_code,
-                "failure_message": payment.failure_message,
-            }
-        )
-        db.session.commit()
-        return (
-            jsonify(
-                {
-                    "error": {
-                        "code": "payment_provider_unavailable",
-                        "message": str(exc),
-                    }
-                }
-            ),
-            502,
-        )
-
-    payment.external_reference = (
-        provider_payload.get("checkout_request_id")
-        or provider_payload.get("payment_intent_id")
-        or provider_payload.get("tx_ref")
-        or provider_payload.get("order_id")
-    )
-    payment.provider_event_id = provider_payload.get("merchant_request_id") or payment.provider_event_id
-    payment.payer_phone_number = provider_payload.get("phone_number")
-    payment.redirect_url = provider_payload.get("redirect_url")
-    payment.provider_response = dump_provider_response(provider_payload)
-    create_notification(
-        g.current_user.id,
-        NotificationType.PAYMENT_CREATED,
-        "Payment created",
-        f"Payment {payment.reference} has been created for order {order.order_number}.",
-    )
     db.session.commit()
-    return jsonify({"item": serialize_payment(payment)}), 201
+    return jsonify({"item": serialize_payment(payment)}), status_code
 
 
 @payments_bp.get("")
@@ -185,23 +86,19 @@ def mark_payment_paid(payment_id: int):
       200:
         description: Payment marked as paid.
     """
-    payment = (
-        Payment.query.join(Order)
-        .filter(Payment.id == payment_id, Order.user_id == g.current_user.id)
-        .first()
-    )
+    payment = get_user_payment(user_id=g.current_user.id, payment_id=payment_id)
     if payment is None:
-        return _payment_not_found()
+        return not_found_response("Payment not found.")
 
-    payment.status = PaymentStatus.PAID
-    payment.order.status = OrderStatus.CONFIRMED
-    payment.provider_response = "Payment marked as paid in local development flow."
-    create_notification(
-        g.current_user.id,
-        NotificationType.PAYMENT_PAID,
-        "Payment successful",
-        f"Payment {payment.reference} was marked as paid.",
-    )
+    try:
+        apply_paid_state(
+            payment,
+            user_id=g.current_user.id,
+            provider_response="Payment marked as paid in local development flow.",
+            notification_message=f"Payment {payment.reference} was marked as paid.",
+        )
+    except ValueError as exc:
+        return jsonify({"error": {"code": "invalid_payment_transition", "message": str(exc)}}), 400
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)})
 
@@ -218,22 +115,19 @@ def mark_payment_failed(payment_id: int):
       200:
         description: Payment marked as failed.
     """
-    payment = (
-        Payment.query.join(Order)
-        .filter(Payment.id == payment_id, Order.user_id == g.current_user.id)
-        .first()
-    )
+    payment = get_user_payment(user_id=g.current_user.id, payment_id=payment_id)
     if payment is None:
-        return _payment_not_found()
+        return not_found_response("Payment not found.")
 
-    payment.status = PaymentStatus.FAILED
-    payment.provider_response = "Payment marked as failed in local development flow."
-    create_notification(
-        g.current_user.id,
-        NotificationType.PAYMENT_FAILED,
-        "Payment failed",
-        f"Payment {payment.reference} was marked as failed.",
-    )
+    try:
+        apply_failed_state(
+            payment,
+            user_id=g.current_user.id,
+            provider_response="Payment marked as failed in local development flow.",
+            notification_message=f"Payment {payment.reference} was marked as failed.",
+        )
+    except ValueError as exc:
+        return jsonify({"error": {"code": "invalid_payment_transition", "message": str(exc)}}), 400
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)})
 
@@ -255,7 +149,7 @@ def handle_payment_webhook(provider: str):
     raw_body = request.get_data(as_text=True)
     signature = request.headers.get("X-TechHive-Signature")
     event_id = request.headers.get("X-TechHive-Event-Id")
-    payload = request.get_json(silent=True) or {}
+    payload = get_json_payload()
 
     unsigned_daraja_callback = (
         provider == PaymentMethod.MPESA.value

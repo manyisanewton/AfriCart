@@ -2,66 +2,46 @@ from datetime import datetime, timedelta, timezone
 
 from app.extensions import db
 from app.blueprints.payments import mpesa as mpesa_module
-from app.models import Address, Brand, Category, Payment, Product, User, UserRole, Vendor, VendorStatus
+from app.models import Payment
 from app.blueprints.payments.helpers import sign_webhook_payload
-from app.utils.security import hash_password
+from tests.factories import (
+    create_catalog_dependencies,
+    create_order_for_payment as build_order_for_payment,
+    create_product,
+    create_vendor_user_and_headers,
+    register_user_and_headers,
+)
 
 
 def auth_headers(client):
-    register_response = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "payment-user@example.com",
-            "password": "SecurePass123",
-            "first_name": "Payment",
-            "last_name": "User",
-            "phone_number": "+254755000111",
-        },
-    )
-    token = register_response.get_json()["tokens"]["access_token"]
-    return {"Authorization": f"Bearer {token}"}
-
-
-def create_address_for_registered_user():
-    user = User.query.filter_by(email="payment-user@example.com").first()
-    address = Address(
-        user_id=user.id,
-        label="Home",
-        recipient_name="Payment User",
+    headers, _user = register_user_and_headers(
+        client,
+        email="payment-user@example.com",
+        first_name="Payment",
+        last_name="User",
         phone_number="+254755000111",
-        country="Kenya",
-        city="Nairobi",
-        state_or_county="Nairobi County",
-        postal_code="00100",
-        address_line_1="Moi Avenue",
-        is_default=True,
     )
-    db.session.add(address)
-    db.session.commit()
-    return address
+    return headers
 
 
-def create_payment_product():
-    vendor_user = User(
+def create_payment_product(client):
+    _vendor_headers, vendor = create_vendor_user_and_headers(
+        client,
         email="vendor-payment@example.com",
-        password_hash=hash_password("SecurePass123"),
         first_name="Vendor",
         last_name="Payments",
         phone_number="+254755000222",
-        role=UserRole.VENDOR,
-    )
-    vendor = Vendor(
-        user=vendor_user,
         business_name="Payments Tech",
         slug="payments-tech",
-        phone_number="+254755000222",
         support_email="support@paymentstech.com",
-        status=VendorStatus.APPROVED,
-        is_verified=True,
     )
-    category = Category(name="Audio", slug="audio")
-    brand = Brand(name="JBL", slug="jbl")
-    product = Product(
+    category, brand = create_catalog_dependencies(
+        category_name="Audio",
+        category_slug="audio",
+        brand_name="JBL",
+        brand_slug="jbl",
+    )
+    return create_product(
         vendor=vendor,
         category=category,
         brand=brand,
@@ -72,28 +52,18 @@ def create_payment_product():
         stock_quantity=5,
         is_active=True,
     )
-    db.session.add_all([vendor_user, vendor, category, brand, product])
-    db.session.commit()
-    return product
 
 
 def create_order_for_payment(client, headers):
-    address = create_address_for_registered_user()
-    product = create_payment_product()
-    cart_response = client.post(
-        "/api/v1/cart/items",
-        json={"product_id": product.id, "quantity": 1},
-        headers=headers,
+    product = create_payment_product(client)
+    order, _address = build_order_for_payment(
+        client,
+        headers,
+        user_email="payment-user@example.com",
+        product=product,
+        quantity=1,
     )
-    assert cart_response.status_code == 201
-
-    order_response = client.post(
-        "/api/v1/orders",
-        json={"address_id": address.id},
-        headers=headers,
-    )
-    assert order_response.status_code == 201
-    return order_response.get_json()["item"]
+    return order
 
 
 def test_create_payment_for_order(client):
@@ -125,6 +95,35 @@ def test_create_mpesa_payment_requires_phone_number(client):
     assert response.status_code == 400
     assert response.get_json()["error"]["details"]["phone_number"] == (
         "phone_number is required for mpesa payments."
+    )
+
+
+def test_create_payment_rejects_invalid_method(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+
+    response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "wire-transfer"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["method"] == "Unsupported payment method."
+
+
+def test_create_payment_rejects_invalid_order_id(client):
+    headers = auth_headers(client)
+
+    response = client.post(
+        "/api/v1/payments",
+        json={"order_id": "abc", "method": "manual"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["order_id"] == (
+        "order_id must be a positive integer."
     )
 
 
@@ -196,6 +195,25 @@ def test_mark_payment_failed(client):
 
     assert response.status_code == 200
     assert response.get_json()["item"]["status"] == "failed"
+
+
+def test_mark_paid_rejects_failed_payment_transition(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+    payment_response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "manual"},
+        headers=headers,
+    )
+    payment_id = payment_response.get_json()["item"]["id"]
+
+    failed_response = client.post(f"/api/v1/payments/{payment_id}/mark-failed", headers=headers)
+    assert failed_response.status_code == 200
+
+    paid_response = client.post(f"/api/v1/payments/{payment_id}/mark-paid", headers=headers)
+
+    assert paid_response.status_code == 400
+    assert paid_response.get_json()["error"]["code"] == "invalid_payment_transition"
 
 
 def test_signed_webhook_marks_provider_payment_paid(client):
@@ -672,20 +690,15 @@ def test_mpesa_success_callback_requires_complete_metadata(client):
 
 def test_mpesa_callback_rejects_duplicate_receipt_for_other_payment(client):
     headers = auth_headers(client)
-    address = create_address_for_registered_user()
-    product = create_payment_product()
+    product = create_payment_product(client)
+    first_order, address = build_order_for_payment(
+        client,
+        headers,
+        user_email="payment-user@example.com",
+        product=product,
+        quantity=1,
+    )
 
-    client.post(
-        "/api/v1/cart/items",
-        json={"product_id": product.id, "quantity": 1},
-        headers=headers,
-    )
-    first_order_response = client.post(
-        "/api/v1/orders",
-        json={"address_id": address.id},
-        headers=headers,
-    )
-    first_order = first_order_response.get_json()["item"]
     first_payment_response = client.post(
         "/api/v1/payments",
         json={"order_id": first_order["id"], "method": "mpesa", "phone_number": "+254755000111"},

@@ -1,6 +1,7 @@
 from flask import jsonify
 
 from app.models import User
+from app.utils.api import validation_error_response
 from app.utils.security import (
     create_access_token,
     create_email_verification_token,
@@ -13,7 +14,7 @@ def auth_error(message: str, status_code: int = 401):
 
 
 def validation_error(errors: dict):
-    return jsonify({"error": {"code": "validation_error", "details": errors}}), 400
+    return validation_error_response(errors)
 
 
 def user_to_dict(user: User) -> dict:

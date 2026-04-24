@@ -1,19 +1,7 @@
 from app.extensions import db
 from app.models import User
-from app.utils.security import create_email_verification_token, create_password_reset_token, hash_password
-
-
-def create_existing_user():
-    user = User(
-        email="existing@example.com",
-        password_hash=hash_password("SecurePass123"),
-        first_name="Existing",
-        last_name="User",
-        phone_number="+254700123456",
-    )
-    db.session.add(user)
-    db.session.commit()
-    return user
+from tests.factories import create_existing_user
+from app.utils.security import create_email_verification_token, create_password_reset_token
 
 
 def test_register_creates_user_and_returns_tokens(client):
@@ -107,6 +95,109 @@ def test_me_returns_authenticated_user(client):
 
     assert response.status_code == 200
     assert response.get_json()["user"]["email"] == "authuser@example.com"
+
+
+def test_update_me_updates_profile_fields(client):
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "profile@example.com",
+            "password": "SecurePass123",
+            "first_name": "Profile",
+            "last_name": "User",
+            "phone_number": "+254700555111",
+        },
+    )
+    access_token = register_response.get_json()["tokens"]["access_token"]
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={"first_name": "Updated", "phone_number": "+254700555222"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["user"]["first_name"] == "Updated"
+    assert payload["user"]["phone_number"] == "+254700555222"
+    assert payload["email_verification_required"] is False
+
+
+def test_update_me_resets_email_verification_when_email_changes(client):
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "verifychange@example.com",
+            "password": "SecurePass123",
+            "first_name": "Verify",
+            "last_name": "Change",
+        },
+    )
+    access_token = register_response.get_json()["tokens"]["access_token"]
+    user = User.query.filter_by(email="verifychange@example.com").first()
+    user.email_verified = True
+    db.session.commit()
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={"email": "verifychanged@example.com"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["user"]["email"] == "verifychanged@example.com"
+    assert payload["user"]["email_verified"] is False
+    assert payload["email_verification_required"] is True
+
+
+def test_update_me_rejects_duplicate_phone_number(client):
+    create_existing_user()
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "dup-phone@example.com",
+            "password": "SecurePass123",
+            "first_name": "Dup",
+            "last_name": "Phone",
+        },
+    )
+    access_token = register_response.get_json()["tokens"]["access_token"]
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={"phone_number": "+254700123456"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["phone_number"] == (
+        "An account with that phone number already exists."
+    )
+
+
+def test_update_me_requires_at_least_one_field(client):
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "empty-update@example.com",
+            "password": "SecurePass123",
+            "first_name": "Empty",
+            "last_name": "Update",
+        },
+    )
+    access_token = register_response.get_json()["tokens"]["access_token"]
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["profile"] == (
+        "At least one profile field must be provided."
+    )
 
 
 def test_refresh_returns_new_access_token(client):

@@ -43,30 +43,35 @@ def upgrade():
         sa.UniqueConstraint("user_id"),
     )
 
-    op.add_column("orders", sa.Column("delivery_status", sa.String(length=40), nullable=False, server_default="processing"))
-    op.add_column("orders", sa.Column("tracking_token", sa.String(length=64), nullable=False, server_default="pending-token"))
-    op.add_column("orders", sa.Column("delivery_zone_name", sa.String(length=120), nullable=True))
-    op.add_column("orders", sa.Column("delivery_agent_id", sa.Integer(), nullable=True))
-    op.create_index("ix_orders_tracking_token", "orders", ["tracking_token"], unique=True)
-    op.create_index("ix_orders_delivery_agent_id", "orders", ["delivery_agent_id"], unique=False)
-    op.create_foreign_key(
-        "fk_orders_delivery_agent_id",
-        "orders",
-        "delivery_agents",
-        ["delivery_agent_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
+    with op.batch_alter_table("orders", recreate="auto") as batch_op:
+        batch_op.add_column(
+            sa.Column("delivery_status", sa.String(length=40), nullable=False, server_default="processing")
+        )
+        batch_op.add_column(
+            sa.Column("tracking_token", sa.String(length=64), nullable=False, server_default="pending-token")
+        )
+        batch_op.add_column(sa.Column("delivery_zone_name", sa.String(length=120), nullable=True))
+        batch_op.add_column(sa.Column("delivery_agent_id", sa.Integer(), nullable=True))
+        batch_op.create_index("ix_orders_tracking_token", ["tracking_token"], unique=True)
+        batch_op.create_index("ix_orders_delivery_agent_id", ["delivery_agent_id"], unique=False)
+        batch_op.create_foreign_key(
+            "fk_orders_delivery_agent_id",
+            "delivery_agents",
+            ["delivery_agent_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
 
 
 def downgrade():
-    op.drop_constraint("fk_orders_delivery_agent_id", "orders", type_="foreignkey")
-    op.drop_index("ix_orders_delivery_agent_id", table_name="orders")
-    op.drop_index("ix_orders_tracking_token", table_name="orders")
-    op.drop_column("orders", "delivery_agent_id")
-    op.drop_column("orders", "delivery_zone_name")
-    op.drop_column("orders", "tracking_token")
-    op.drop_column("orders", "delivery_status")
+    with op.batch_alter_table("orders", recreate="auto") as batch_op:
+        batch_op.drop_constraint("fk_orders_delivery_agent_id", type_="foreignkey")
+        batch_op.drop_index("ix_orders_delivery_agent_id")
+        batch_op.drop_index("ix_orders_tracking_token")
+        batch_op.drop_column("delivery_agent_id")
+        batch_op.drop_column("delivery_zone_name")
+        batch_op.drop_column("tracking_token")
+        batch_op.drop_column("delivery_status")
     op.drop_table("delivery_agents")
     op.drop_index("ix_delivery_zones_city", table_name="delivery_zones")
     op.drop_table("delivery_zones")

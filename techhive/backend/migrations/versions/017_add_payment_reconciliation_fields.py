@@ -16,6 +16,7 @@ depends_on = None
 
 
 def upgrade():
+    bind = op.get_bind()
     op.add_column("payments", sa.Column("initiated_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column(
         "payments",
@@ -32,7 +33,8 @@ def upgrade():
         ["reconciliation_due_at"],
         unique=False,
     )
-    op.alter_column("payments", "reconciliation_attempts", server_default=None)
+    if bind.dialect.name != "sqlite":
+        op.alter_column("payments", "reconciliation_attempts", server_default=None)
 
 
 def downgrade():

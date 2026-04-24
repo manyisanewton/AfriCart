@@ -1,0 +1,8 @@
+.env
+.env.*
+.venv/
+techhive.db
+*.db
+*.sqlite3
+.pytest_cache/
+__pycache__/

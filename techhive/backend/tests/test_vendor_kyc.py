@@ -1,5 +1,6 @@
 from app.extensions import db
 from app.models import User, UserRole, Vendor, VendorKYCStatus, VendorStatus
+from tests.factories import create_admin_headers as create_admin_headers_base
 
 
 def create_vendor_headers(client):
@@ -31,21 +32,13 @@ def create_vendor_headers(client):
 
 
 def create_admin_headers(client):
-    response = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "admin-kyc@example.com",
-            "password": "SecurePass123",
-            "first_name": "Admin",
-            "last_name": "Kyc",
-            "phone_number": "+254744000222",
-        },
+    return create_admin_headers_base(
+        client,
+        email="admin-kyc@example.com",
+        first_name="Admin",
+        last_name="Kyc",
+        phone_number="+254744000222",
     )
-    user = User.query.filter_by(email="admin-kyc@example.com").first()
-    user.role = UserRole.ADMIN
-    db.session.commit()
-    token = response.get_json()["tokens"]["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def kyc_payload(**overrides):

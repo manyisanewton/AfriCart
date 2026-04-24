@@ -49,12 +49,20 @@ from app.models import (
     VendorStatus,
 )
 from app.services.audit_service import log_audit_event, serialize_audit_log
+from app.services.catalog_validation_service import (
+    ensure_unique_brand_slug,
+    ensure_unique_category_slug,
+    ensure_unique_promo_code,
+    get_product_for_flash_sale,
+)
+from app.services.commerce_state_service import transition_order
 from app.services.payment_reconciliation_service import reconcile_stale_mpesa_payments
+from app.utils.api import get_json_payload, not_found_response, parse_positive_int
 from app.blueprints.vendors.schemas import serialize_vendor_kyc_submission
 
 
 def _not_found(message: str):
-    return jsonify({"error": {"code": "not_found", "message": message}}), 404
+    return not_found_response(message)
 
 
 def _add_audit_log(*, action: str, entity_type: str, entity_id: int, metadata: dict | None = None) -> None:
@@ -276,15 +284,13 @@ def reconcile_stale_payments():
       200:
         description: Stale payments reconciled.
     """
-    payload = request.get_json(silent=True) or {}
-    limit = payload.get("limit", current_app.config["MPESA_RECONCILIATION_BATCH_LIMIT"])
-
-    try:
-        limit = int(limit)
-        if limit <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        return validation_error({"limit": "limit must be a positive integer."})
+    payload = get_json_payload()
+    limit, errors = parse_positive_int(
+        payload.get("limit", current_app.config["MPESA_RECONCILIATION_BATCH_LIMIT"]),
+        field_name="limit",
+    )
+    if errors:
+        return validation_error(errors)
 
     results = reconcile_stale_mpesa_payments(
         limit=limit,
@@ -329,12 +335,13 @@ def create_category():
       201:
         description: Category created.
     """
-    payload = validate_named_entity_payload(request.get_json(silent=True))
+    payload = validate_named_entity_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    if Category.query.filter_by(slug=payload["slug"]).first():
-        return validation_error({"slug": "A category with that slug already exists."})
+    uniqueness_error = ensure_unique_category_slug(payload["slug"])
+    if uniqueness_error:
+        return validation_error(uniqueness_error.details)
 
     category = Category(
         name=payload["name"],
@@ -365,12 +372,13 @@ def create_brand():
       201:
         description: Brand created.
     """
-    payload = validate_named_entity_payload(request.get_json(silent=True))
+    payload = validate_named_entity_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    if Brand.query.filter_by(slug=payload["slug"]).first():
-        return validation_error({"slug": "A brand with that slug already exists."})
+    uniqueness_error = ensure_unique_brand_slug(payload["slug"])
+    if uniqueness_error:
+        return validation_error(uniqueness_error.details)
 
     brand = Brand(
         name=payload["name"],
@@ -419,7 +427,7 @@ def update_product_active_state(product_id: int):
       200:
         description: Product moderation state updated.
     """
-    payload = validate_product_active_payload(request.get_json(silent=True))
+    payload = validate_product_active_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
@@ -514,7 +522,7 @@ def create_banner():
       201:
         description: Banner created.
     """
-    payload = validate_banner_payload(request.get_json(silent=True))
+    payload = validate_banner_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
@@ -551,12 +559,13 @@ def create_promo_code():
       201:
         description: Promo code created.
     """
-    payload = validate_promo_code_payload(request.get_json(silent=True))
+    payload = validate_promo_code_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    if PromoCode.query.filter_by(code=payload["code"]).first():
-        return validation_error({"code": "A promo code with that code already exists."})
+    uniqueness_error = ensure_unique_promo_code(payload["code"])
+    if uniqueness_error:
+        return validation_error(uniqueness_error.details)
 
     promo_code = PromoCode(
         code=payload["code"],
@@ -605,13 +614,13 @@ def create_flash_sale():
       201:
         description: Flash sale created.
     """
-    payload = validate_flash_sale_payload(request.get_json(silent=True))
+    payload = validate_flash_sale_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    product = db.session.get(Product, payload["product_id"])
-    if product is None:
-        return validation_error({"product_id": "Selected product was not found."})
+    product, product_error = get_product_for_flash_sale(payload["product_id"])
+    if product_error:
+        return validation_error(product_error.details)
 
     flash_sale = FlashSale(
         product_id=product.id,
@@ -645,7 +654,7 @@ def update_order_status(order_id: int):
       200:
         description: Order status updated.
     """
-    payload = validate_order_status_payload(request.get_json(silent=True))
+    payload = validate_order_status_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
@@ -653,7 +662,19 @@ def update_order_status(order_id: int):
     if order is None:
         return _not_found("Order not found.")
 
-    order.status = OrderStatus(payload["status"])
+    transition_error = transition_order(order, OrderStatus(payload["status"]))
+    if transition_error is not None:
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": transition_error.code,
+                        "message": transition_error.message,
+                    }
+                }
+            ),
+            400,
+        )
     _add_audit_log(
         action="admin.order_status_updated",
         entity_type="order",
@@ -692,7 +713,7 @@ def update_refund_status(refund_id: int):
       200:
         description: Refund status updated.
     """
-    payload = validate_refund_status_payload(request.get_json(silent=True))
+    payload = validate_refund_status_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 

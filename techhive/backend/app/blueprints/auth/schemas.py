@@ -124,3 +124,55 @@ def validate_token_payload(payload: dict | None, field_name: str = "token") -> d
     if not token:
         return {"errors": {field_name: f"{field_name} is required."}}
     return {field_name: token}
+
+
+def validate_profile_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    errors = {}
+
+    email_raw = data.get("email")
+    first_name_raw = data.get("first_name")
+    last_name_raw = data.get("last_name")
+    phone_number_raw = data.get("phone_number", "__missing__")
+
+    normalized = {}
+
+    if email_raw is not None:
+        email = str(email_raw).strip().lower()
+        if not email:
+            errors["email"] = "email cannot be blank."
+        elif not EMAIL_PATTERN.match(email):
+            errors["email"] = "email must be a valid email address."
+        else:
+            normalized["email"] = email
+
+    if first_name_raw is not None:
+        first_name = str(first_name_raw).strip()
+        if not first_name:
+            errors["first_name"] = "first_name cannot be blank."
+        else:
+            normalized["first_name"] = first_name
+
+    if last_name_raw is not None:
+        last_name = str(last_name_raw).strip()
+        if not last_name:
+            errors["last_name"] = "last_name cannot be blank."
+        else:
+            normalized["last_name"] = last_name
+
+    if phone_number_raw != "__missing__":
+        phone_number = str(phone_number_raw or "").strip() or None
+        normalized["phone_number"] = phone_number
+
+    if not normalized and not errors:
+        errors["profile"] = "At least one profile field must be provided."
+
+    if errors:
+        return {"errors": errors}
+    return {
+        "email": normalized.get("email"),
+        "first_name": normalized.get("first_name"),
+        "last_name": normalized.get("last_name"),
+        "phone_number": normalized.get("phone_number") if "phone_number" in normalized else None,
+        "provided_fields": set(normalized.keys()),
+    }

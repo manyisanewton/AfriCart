@@ -1,3 +1,4 @@
+from app.utils.api import parse_positive_int
 from app.utils.helpers import format_money
 from app.utils.pagination import build_pagination_metadata, normalize_pagination
 from app.utils.validators import parse_allowed_origins, parse_bool
@@ -38,3 +39,17 @@ def test_format_money_returns_consistent_string():
     assert format_money(12) == "12.00"
     assert format_money("9.5") == "9.50"
     assert format_money(None) is None
+
+
+def test_parse_positive_int_returns_error_for_invalid_values():
+    parsed, errors = parse_positive_int("zero", field_name="limit")
+
+    assert parsed is None
+    assert errors == {"limit": "limit must be a positive integer."}
+
+
+def test_parse_positive_int_reads_positive_numbers():
+    parsed, errors = parse_positive_int("7", field_name="limit")
+
+    assert parsed == 7
+    assert errors is None

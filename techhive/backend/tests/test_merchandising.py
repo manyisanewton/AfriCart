@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from tests.test_admin import create_admin_headers
-from tests.test_products import seed_catalog
+from tests.factories import create_admin_headers, seed_catalog
 
 
 def test_public_banners_only_return_active_items(client):

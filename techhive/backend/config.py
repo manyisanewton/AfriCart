@@ -116,6 +116,10 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     PAYMENTS_ALLOW_SIMULATION = True
+    MPESA_CONSUMER_KEY = None
+    MPESA_CONSUMER_SECRET = None
+    MPESA_SHORTCODE = None
+    MPESA_PASSKEY = None
 
 
 class DevelopmentConfig(Config):

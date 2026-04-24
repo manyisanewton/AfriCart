@@ -1,24 +1,17 @@
 from app.extensions import db
 from app.models import Address, Brand, Category, Product, User, UserRole, Vendor, VendorStatus
 from app.utils.security import hash_password
+from tests.factories import create_admin_headers as create_admin_headers_base
 
 
 def create_admin_headers(client):
-    response = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "analytics-admin@example.com",
-            "password": "SecurePass123",
-            "first_name": "Analytics",
-            "last_name": "Admin",
-            "phone_number": "+254733330001",
-        },
+    return create_admin_headers_base(
+        client,
+        email="analytics-admin@example.com",
+        first_name="Analytics",
+        last_name="Admin",
+        phone_number="+254733330001",
     )
-    user = User.query.filter_by(email="analytics-admin@example.com").first()
-    user.role = UserRole.ADMIN
-    db.session.commit()
-    token = response.get_json()["tokens"]["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def create_customer_headers(client):

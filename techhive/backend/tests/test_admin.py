@@ -4,24 +4,17 @@ from app.services import payment_reconciliation_service as reconciliation_servic
 from app.extensions import db
 from app.models import Address, Brand, Category, Payment, PaymentMethod, Product, User, UserRole, Vendor, VendorStatus
 from app.utils.security import hash_password
+from tests.factories import create_admin_headers as create_admin_headers_base
 
 
 def create_admin_headers(client):
-    response = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "admin-slice@example.com",
-            "password": "SecurePass123",
-            "first_name": "Admin",
-            "last_name": "Slice",
-            "phone_number": "+254777000111",
-        },
+    return create_admin_headers_base(
+        client,
+        email="admin-slice@example.com",
+        first_name="Admin",
+        last_name="Slice",
+        phone_number="+254777000111",
     )
-    user = User.query.filter_by(email="admin-slice@example.com").first()
-    user.role = UserRole.ADMIN
-    db.session.commit()
-    token = response.get_json()["tokens"]["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def create_customer_headers(client):
@@ -181,6 +174,52 @@ def test_admin_can_create_category_and_brand(client):
     assert brand_response.status_code == 201
 
 
+def test_admin_rejects_duplicate_category_slug(client):
+    headers = create_admin_headers(client)
+    db.session.add(Category(name="Storage", slug="storage"))
+    db.session.commit()
+
+    response = client.post(
+        "/api/v1/admin/categories",
+        json={"name": "More Storage", "slug": "storage"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["slug"] == (
+        "A category with that slug already exists."
+    )
+
+
+def test_admin_rejects_duplicate_promo_code(client):
+    headers = create_admin_headers(client)
+    response = client.post(
+        "/api/v1/admin/promo-codes",
+        json={
+            "code": "SAVE10",
+            "discount_type": "percentage",
+            "discount_value": 10,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201
+
+    duplicate_response = client.post(
+        "/api/v1/admin/promo-codes",
+        json={
+            "code": "SAVE10",
+            "discount_type": "fixed",
+            "discount_value": 100,
+        },
+        headers=headers,
+    )
+
+    assert duplicate_response.status_code == 400
+    assert duplicate_response.get_json()["error"]["details"]["code"] == (
+        "A promo code with that code already exists."
+    )
+
+
 def test_admin_can_deactivate_product(client):
     headers = create_admin_headers(client)
     vendor_user, vendor = create_vendor_fixture()
@@ -208,6 +247,20 @@ def test_admin_can_update_order_status(client):
 
     assert response.status_code == 200
     assert response.get_json()["item"]["status"] == "processing"
+
+
+def test_admin_rejects_invalid_order_transition(client):
+    admin_headers = create_admin_headers(client)
+    order = create_order_fixture(client)
+
+    response = client.patch(
+        f"/api/v1/admin/orders/{order['id']}/status",
+        json={"status": "delivered"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "invalid_order_transition"
 
 
 def test_admin_can_reconcile_stale_mpesa_payments(client):
@@ -268,6 +321,19 @@ def test_admin_can_reconcile_stale_mpesa_payments(client):
     assert timed_out_item["status"] == "failed"
     assert timed_out_item["failure_code"] == "reconciliation_timeout"
     assert timed_out_item["reconciliation_attempts"] == 2
+
+
+def test_admin_reconcile_stale_rejects_invalid_limit(client):
+    admin_headers = create_admin_headers(client)
+
+    response = client.post(
+        "/api/v1/admin/payments/reconcile-stale",
+        json={"limit": "invalid"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["limit"] == "limit must be a positive integer."
 
 
 def test_admin_reconciliation_marks_provider_failed_payment(client, monkeypatch):

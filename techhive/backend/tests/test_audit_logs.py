@@ -1,6 +1,5 @@
 from app.models import AuditLog
-from tests.test_admin import create_admin_headers
-from tests.test_vendors import create_catalog_dependencies, create_vendor_user_and_headers
+from tests.factories import create_admin_headers, create_catalog_dependencies, create_vendor_user_and_headers
 
 
 def test_admin_category_creation_writes_audit_log(client):
@@ -35,7 +34,16 @@ def test_admin_can_list_audit_logs(client):
 
 
 def test_vendor_actions_write_audit_logs(client):
-    headers, vendor = create_vendor_user_and_headers(client)
+    headers, vendor = create_vendor_user_and_headers(
+        client,
+        email="vendor-slice@example.com",
+        first_name="Vendor",
+        last_name="Slice",
+        phone_number="+254766000222",
+        business_name="Slice Vendor",
+        slug="slice-vendor",
+        support_email="support@vendor-slice.com",
+    )
     category, brand = create_catalog_dependencies()
 
     create_response = client.post(

@@ -1,4 +1,3 @@
-import jwt
 from flask import g, request
 
 from app.blueprints.auth import auth_bp
@@ -7,6 +6,7 @@ from app.blueprints.auth.schemas import (
     validate_change_password_payload,
     validate_email_payload,
     validate_login_payload,
+    validate_profile_update_payload,
     validate_password_reset_payload,
     validate_refresh_payload,
     validate_registration_payload,
@@ -16,12 +16,14 @@ from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.middleware.rate_limiter import rate_limit
 from app.models import User
+from app.services.account_service import update_user_profile
+from app.services.auth_token_service import resolve_user_from_token
 from app.services.email_service import send_email
+from app.utils.api import get_json_payload
 from app.utils.security import (
     create_access_token,
     create_email_verification_token,
     create_password_reset_token,
-    decode_token,
     hash_password,
     verify_password,
 )
@@ -57,7 +59,7 @@ def register():
       201:
         description: Account created successfully.
     """
-    payload = validate_registration_payload(request.get_json(silent=True))
+    payload = validate_registration_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
@@ -97,7 +99,7 @@ def login():
       200:
         description: Login successful.
     """
-    payload = validate_login_payload(request.get_json(silent=True))
+    payload = validate_login_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
@@ -123,23 +125,17 @@ def refresh():
       200:
         description: Access token refreshed successfully.
     """
-    payload = validate_refresh_payload(request.get_json(silent=True))
+    payload = validate_refresh_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    try:
-        token_payload = decode_token(payload["refresh_token"])
-    except jwt.ExpiredSignatureError:
-        return auth_error("Refresh token has expired.")
-    except jwt.InvalidTokenError:
-        return auth_error("Refresh token is invalid.")
-
-    if token_payload.get("type") != "refresh":
-        return auth_error("Refresh token is required.")
-
-    user = db.session.get(User, int(token_payload["sub"]))
-    if user is None or not user.is_active:
-        return auth_error("Authenticated user is not available.")
+    user, _, error = resolve_user_from_token(
+        payload["refresh_token"],
+        expected_type="refresh",
+        required_message="Refresh token is required.",
+    )
+    if error is not None:
+        return auth_error(error.message, error.status_code)
 
     return {
         "access_token": create_access_token(user.id),
@@ -159,19 +155,17 @@ def logout():
       200:
         description: Logout acknowledged.
     """
-    payload = validate_refresh_payload(request.get_json(silent=True))
+    payload = validate_refresh_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    try:
-        token_payload = decode_token(payload["refresh_token"])
-    except jwt.ExpiredSignatureError:
-        return auth_error("Refresh token has expired.")
-    except jwt.InvalidTokenError:
-        return auth_error("Refresh token is invalid.")
-
-    if token_payload.get("type") != "refresh":
-        return auth_error("Refresh token is required.")
+    _, _, error = resolve_user_from_token(
+        payload["refresh_token"],
+        expected_type="refresh",
+        required_message="Refresh token is required.",
+    )
+    if error is not None:
+        return auth_error(error.message, error.status_code)
 
     return {"message": "Logout successful. Discard the current tokens on the client."}
 
@@ -190,7 +184,7 @@ def change_password():
       200:
         description: Password changed.
     """
-    payload = validate_change_password_payload(request.get_json(silent=True))
+    payload = validate_change_password_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
@@ -214,7 +208,7 @@ def forgot_password():
       200:
         description: Reset flow initiated.
     """
-    payload = validate_email_payload(request.get_json(silent=True))
+    payload = validate_email_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
@@ -248,23 +242,18 @@ def reset_password():
       200:
         description: Password reset successfully.
     """
-    payload = validate_password_reset_payload(request.get_json(silent=True))
+    payload = validate_password_reset_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    try:
-        token_payload = decode_token(payload["token"])
-    except jwt.ExpiredSignatureError:
-        return auth_error("Password reset token has expired.")
-    except jwt.InvalidTokenError:
-        return auth_error("Password reset token is invalid.")
-
-    if token_payload.get("type") != "password_reset":
-        return auth_error("Password reset token is required.")
-
-    user = db.session.get(User, int(token_payload["sub"]))
-    if user is None:
-        return auth_error("Authenticated user is not available.", 404)
+    user, _, error = resolve_user_from_token(
+        payload["token"],
+        expected_type="password_reset",
+        required_message="Password reset token is required.",
+        unavailable_status_code=404,
+    )
+    if error is not None:
+        return auth_error(error.message, error.status_code)
 
     user.password_hash = hash_password(payload["new_password"])
     db.session.commit()
@@ -283,23 +272,18 @@ def verify_email():
       200:
         description: Email verified.
     """
-    payload = validate_token_payload(request.get_json(silent=True), field_name="verification_token")
+    payload = validate_token_payload(get_json_payload(), field_name="verification_token")
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    try:
-        token_payload = decode_token(payload["verification_token"])
-    except jwt.ExpiredSignatureError:
-        return auth_error("Email verification token has expired.")
-    except jwt.InvalidTokenError:
-        return auth_error("Email verification token is invalid.")
-
-    if token_payload.get("type") != "email_verification":
-        return auth_error("Email verification token is required.")
-
-    user = db.session.get(User, int(token_payload["sub"]))
-    if user is None:
-        return auth_error("Authenticated user is not available.", 404)
+    user, _, error = resolve_user_from_token(
+        payload["verification_token"],
+        expected_type="email_verification",
+        required_message="Email verification token is required.",
+        unavailable_status_code=404,
+    )
+    if error is not None:
+        return auth_error(error.message, error.status_code)
 
     user.email_verified = True
     db.session.commit()
@@ -349,3 +333,39 @@ def get_current_user():
         description: Current user profile.
     """
     return {"user": user_to_dict(g.current_user)}
+
+
+@auth_bp.patch("/me")
+@auth_required
+def update_current_user():
+    """
+    Update the currently authenticated user's profile.
+    ---
+    tags:
+      - Authentication
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Current user profile updated.
+    """
+    payload = validate_profile_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    user, error = update_user_profile(
+        user=g.current_user,
+        email=payload["email"] if "email" in payload["provided_fields"] else None,
+        first_name=payload["first_name"] if "first_name" in payload["provided_fields"] else None,
+        last_name=payload["last_name"] if "last_name" in payload["provided_fields"] else None,
+        phone_number=payload["phone_number"] if "phone_number" in payload["provided_fields"] else g.current_user.phone_number,
+    )
+    if error is not None:
+        return validation_error(error.details)
+
+    db.session.commit()
+    email_changed = getattr(user, "_email_changed_for_response", False)
+    return {
+        "user": user_to_dict(user),
+        "email_verification_required": email_changed,
+    }

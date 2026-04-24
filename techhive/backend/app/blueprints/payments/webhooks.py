@@ -9,6 +9,7 @@ from app.blueprints.payments.mpesa import classify_mpesa_result_code, initiate_m
 from app.blueprints.payments.paypal import create_paypal_order
 from app.blueprints.payments.stripe_gateway import create_stripe_payment_intent
 from app.models import NotificationType, OrderStatus, Payment, PaymentMethod, PaymentStatus
+from app.services.payment_service import apply_failed_state, apply_paid_state
 
 
 PROVIDER_SECRETS = {
@@ -95,28 +96,21 @@ def apply_provider_webhook(provider: str, event_id: str | None, payload: dict) -
             return None, "phone_mismatch"
 
     if normalized["status"] == PaymentStatus.PAID.value:
-        payment.status = PaymentStatus.PAID
-        payment.order.status = OrderStatus.CONFIRMED
-        payment.failure_code = None
-        payment.failure_message = None
         payment.provider_receipt = normalized.get("provider_receipt") or payment.provider_receipt
-        payment.processed_at = datetime.now(timezone.utc)
-        create_notification(
-            payment.order.user_id,
-            NotificationType.PAYMENT_PAID,
-            "Payment successful",
-            f"Payment {payment.reference} was confirmed by {provider}.",
+        apply_paid_state(
+            payment,
+            user_id=payment.order.user_id,
+            provider_response=dump_provider_response(normalized["raw"]),
+            notification_message=f"Payment {payment.reference} was confirmed by {provider}.",
         )
     elif normalized["status"] == PaymentStatus.FAILED.value:
-        payment.status = PaymentStatus.FAILED
-        payment.failure_code = normalized.get("failure_code")
-        payment.failure_message = normalized.get("failure_message")
-        payment.processed_at = datetime.now(timezone.utc)
-        create_notification(
-            payment.order.user_id,
-            NotificationType.PAYMENT_FAILED,
-            "Payment failed",
-            f"Payment {payment.reference} failed with {provider}.",
+        apply_failed_state(
+            payment,
+            user_id=payment.order.user_id,
+            provider_response=dump_provider_response(normalized["raw"]),
+            notification_message=f"Payment {payment.reference} failed with {provider}.",
+            failure_code=normalized.get("failure_code"),
+            failure_message=normalized.get("failure_message"),
         )
 
     payment.provider_event_id = normalized["event_id"] or payment.provider_event_id

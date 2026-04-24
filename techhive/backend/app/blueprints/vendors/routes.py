@@ -10,9 +10,15 @@ from app.blueprints.vendors.schemas import (
 )
 from app.extensions import db
 from app.middleware.role_required import role_required
-from app.models import Brand, Category, Order, OrderItem, Product, UserRole
+from app.models import Order, OrderItem, Product, UserRole
 from app.services.analytics_service import vendor_summary, vendor_top_products
 from app.services.audit_service import log_audit_event
+from app.services.catalog_validation_service import (
+    ensure_unique_product_slug_and_sku,
+    get_active_brand,
+    get_active_category,
+)
+from app.utils.api import get_json_payload, not_found_response
 
 
 def _vendor_profile_or_403():
@@ -125,22 +131,24 @@ def create_vendor_product():
     if error:
         return error
 
-    payload = validate_vendor_product_payload(request.get_json(silent=True))
+    payload = validate_vendor_product_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
-    category = Category.query.filter_by(id=payload["category_id"], is_active=True).first()
-    if category is None:
-        return validation_error({"category_id": "Selected category was not found."})
+    category, category_error = get_active_category(payload["category_id"])
+    if category_error:
+        return validation_error(category_error.details)
 
-    brand = Brand.query.filter_by(id=payload["brand_id"], is_active=True).first()
-    if brand is None:
-        return validation_error({"brand_id": "Selected brand was not found."})
+    brand, brand_error = get_active_brand(payload["brand_id"])
+    if brand_error:
+        return validation_error(brand_error.details)
 
-    if Product.query.filter_by(slug=payload["slug"]).first():
-        return validation_error({"slug": "A product with that slug already exists."})
-    if Product.query.filter_by(sku=payload["sku"]).first():
-        return validation_error({"sku": "A product with that SKU already exists."})
+    uniqueness_error = ensure_unique_product_slug_and_sku(
+        slug=payload["slug"],
+        sku=payload["sku"],
+    )
+    if uniqueness_error:
+        return validation_error(uniqueness_error.details)
 
     product = Product(
         vendor_id=vendor.id,
@@ -185,9 +193,9 @@ def update_vendor_stock(product_id: int):
 
     product = _vendor_product_or_404(product_id, vendor.id)
     if product is None:
-        return jsonify({"error": {"code": "not_found", "message": "Product not found."}}), 404
+        return not_found_response("Product not found.")
 
-    payload = validate_stock_payload(request.get_json(silent=True))
+    payload = validate_stock_payload(get_json_payload())
     if "errors" in payload:
         return validation_error(payload["errors"])
 
