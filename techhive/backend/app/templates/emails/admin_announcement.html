@@ -1,0 +1,17 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Important update from TechHive" %}
+{% set preheader = preheader or message %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>{{ message }}</p>
+<div class="panel">
+  <strong>Announcement</strong>
+  <p style="margin: 0;">{{ title or headline }}</p>
+</div>
+{% if cta_label and cta_url %}
+<p>
+  <a class="cta-button" href="{{ cta_url }}">{{ cta_label }}</a>
+</p>
+{% endif %}
+<p>This communication was sent because it relates to your experience on {{ app_name }}.</p>
+{% endblock %}

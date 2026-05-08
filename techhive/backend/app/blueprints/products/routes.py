@@ -11,9 +11,20 @@ from app.blueprints.products.schemas import (
     serialize_flash_sale,
     serialize_product,
 )
+from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.models import Banner, Brand, Category, FlashSale, Product
-from app.services.recommendation_service import personalized_recommendations
+from app.services.product_signal_service import list_recently_viewed_products, record_product_view
+from app.services.recommendation_analytics_service import (
+    log_recommendation_click,
+    log_recommendation_impressions,
+)
+from app.services.recommendation_service import (
+    buy_again_recommendation_items,
+    personalized_recommendation_items,
+    similar_product_recommendation_items,
+    trending_recommendation_items,
+)
 from app.utils.pagination import build_pagination_metadata, normalize_pagination
 
 
@@ -214,5 +225,230 @@ def list_recommendations():
         description: Recommended products.
     """
     limit = min(max(request.args.get("limit", default=6, type=int), 1), 20)
-    items = personalized_recommendations(g.current_user.id, limit=limit)
-    return jsonify({"items": [serialize_product(product) for product in items]})
+    mode = request.args.get("mode", default="for_you", type=str).strip().lower()
+    if mode == "for_you":
+        items = personalized_recommendation_items(g.current_user.id, limit=limit)
+    elif mode == "trending_now":
+        items = trending_recommendation_items(limit=limit)
+    elif mode == "buy_again":
+        items = buy_again_recommendation_items(g.current_user.id, limit=limit)
+    elif mode == "similar_products":
+        product_slug = request.args.get("product_slug", default="", type=str).strip()
+        if not product_slug:
+            return (
+                jsonify(
+                    {
+                        "error": {
+                            "code": "product_slug_required",
+                            "message": "product_slug is required for similar_products mode.",
+                        }
+                    }
+                ),
+                400,
+            )
+        product = Product.query.filter_by(slug=product_slug, is_active=True).first()
+        if product is None:
+            return (
+                jsonify(
+                    {
+                        "error": {
+                            "code": "not_found",
+                            "message": "Product not found.",
+                        }
+                    }
+                ),
+                404,
+            )
+        items = similar_product_recommendation_items(product, limit=limit)
+    else:
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "invalid_mode",
+                        "message": "Unsupported recommendation mode.",
+                    }
+                }
+            ),
+            400,
+        )
+
+    db.session.add_all(log_recommendation_impressions(user_id=g.current_user.id, mode=mode, items=items))
+    db.session.commit()
+    return jsonify(
+        {
+            "mode": mode,
+            "items": [
+                {
+                    **serialize_product(item["product"]),
+                    "reason_code": item["reason_code"],
+                    "reason_label": item["reason_label"],
+                }
+                for item in items
+            ]
+        }
+    )
+
+
+@products_bp.post("/products/recommendations/click")
+@auth_required
+def record_recommendation_click():
+    """
+    Record a recommendation click event.
+    ---
+    tags:
+      - Products
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Recommendation click recorded.
+    """
+    payload = request.get_json(silent=True) or {}
+    try:
+        product_id = int(payload.get("product_id"))
+        if product_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "invalid_product_id",
+                        "message": "product_id must be a positive integer.",
+                    }
+                }
+            ),
+            400,
+        )
+
+    mode = str(payload.get("mode") or "").strip().lower()
+    reason_code = str(payload.get("reason_code") or "").strip().lower()
+    if not mode:
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "invalid_mode",
+                        "message": "mode is required.",
+                    }
+                }
+            ),
+            400,
+        )
+    if not reason_code:
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "invalid_reason_code",
+                        "message": "reason_code is required.",
+                    }
+                }
+            ),
+            400,
+        )
+
+    product = db.session.get(Product, product_id)
+    if product is None or not product.is_active:
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "not_found",
+                        "message": "Product not found.",
+                    }
+                }
+            ),
+            404,
+        )
+
+    db.session.add(
+        log_recommendation_click(
+            user_id=g.current_user.id,
+            product_id=product.id,
+            mode=mode,
+            reason_code=reason_code,
+        )
+    )
+    db.session.commit()
+    return jsonify({"item": {"product_id": product.id, "mode": mode, "reason_code": reason_code}})
+
+
+@products_bp.post("/products/<string:slug>/view")
+@auth_required
+def record_view(slug: str):
+    """
+    Record an authenticated product view signal.
+    ---
+    tags:
+      - Products
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Product view recorded.
+      404:
+        description: Product not found.
+    """
+    product = Product.query.filter_by(slug=slug, is_active=True).first()
+    if product is None:
+        return (
+            jsonify(
+                {
+                    "error": {
+                        "code": "not_found",
+                        "message": "Product not found.",
+                    }
+                }
+            ),
+            404,
+        )
+
+    product_view = record_product_view(user_id=g.current_user.id, product=product)
+    from app.extensions import db
+
+    db.session.commit()
+    return jsonify(
+        {
+            "item": {
+                "product_id": product.id,
+                "product_slug": product.slug,
+                "view_count": product_view.view_count,
+                "first_viewed_at": product_view.first_viewed_at.isoformat(),
+                "last_viewed_at": product_view.last_viewed_at.isoformat(),
+            }
+        }
+    )
+
+
+@products_bp.get("/products/recently-viewed")
+@auth_required
+def list_recently_viewed():
+    """
+    List recently viewed products for the authenticated user.
+    ---
+    tags:
+      - Products
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Recently viewed products.
+    """
+    limit = min(max(request.args.get("limit", default=6, type=int), 1), 20)
+    views = list_recently_viewed_products(user_id=g.current_user.id, limit=limit)
+    return jsonify(
+        {
+            "items": [
+                {
+                    "view_count": product_view.view_count,
+                    "first_viewed_at": product_view.first_viewed_at.isoformat(),
+                    "last_viewed_at": product_view.last_viewed_at.isoformat(),
+                    "product": serialize_product(product_view.product),
+                }
+                for product_view in views
+                if product_view.product is not None and product_view.product.is_active
+            ]
+        }
+    )

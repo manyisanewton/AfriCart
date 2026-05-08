@@ -7,16 +7,23 @@ from app.blueprints.admin import admin_bp
 from app.blueprints.admin.schemas import (
     validate_banner_payload,
     validate_banner_update_payload,
+    validate_bulk_email_payload,
+    validate_bulk_notification_payload,
     validate_flash_sale_payload,
     validate_flash_sale_update_payload,
     validate_named_entity_payload,
     validate_named_entity_update_payload,
+    validate_notification_delivery_retry_payload,
     validate_order_status_payload,
+    validate_platform_setting_payload,
+    validate_platform_setting_update_payload,
+    validate_recommendation_settings_update_payload,
     validate_promo_code_payload,
     validate_promo_code_update_payload,
     validate_refund_status_payload,
     validate_product_active_payload,
     validate_role_payload,
+    validate_support_ticket_status_payload,
     validate_user_active_payload,
     validate_vendor_kyc_status_payload,
     validate_vendor_status_payload,
@@ -39,13 +46,20 @@ from app.models import (
     Brand,
     Category,
     FlashSale,
+    NotificationChannel,
+    NotificationType,
     Order,
     OrderStatus,
+    NotificationDelivery,
+    NotificationDeliveryStatus,
+    PlatformSetting,
     Product,
     PromoCode,
     PromoCodeType,
     Refund,
     RefundStatus,
+    SupportTicket,
+    SupportTicketStatus,
     User,
     UserRole,
     Vendor,
@@ -67,6 +81,24 @@ from app.services.admin_resource_service import (
     update_promo_code,
     update_user_active,
 )
+from app.services.admin_dashboard_service import build_admin_dashboard
+from app.services.admin_reporting_service import (
+    build_admin_operations_queues,
+    build_admin_overview_report,
+    list_vendor_performance,
+)
+from app.services.bulk_email_service import dispatch_bulk_email_campaign
+from app.services.notification_dispatch_service import dispatch_bulk_notification
+from app.services.notification_dispatch_service import retry_notification_delivery
+from app.services.major_notification_service import (
+    notify_refund_updated,
+    notify_support_ticket_updated,
+)
+from app.services.recommendation_analytics_service import summarize_recommendation_metrics
+from app.services.recommendation_settings_service import (
+    RECOMMENDATION_SETTING_KEYS,
+    serialize_recommendation_settings,
+)
 from app.services.catalog_validation_service import (
     ensure_unique_brand_slug,
     ensure_unique_category_slug,
@@ -75,7 +107,10 @@ from app.services.catalog_validation_service import (
 )
 from app.services.commerce_state_service import transition_order
 from app.services.payment_reconciliation_service import reconcile_stale_mpesa_payments
+from app.services.mpesa_logging_service import tail_mpesa_logs
 from app.utils.api import get_json_payload, not_found_response, parse_positive_int
+from app.blueprints.notifications.schemas import serialize_notification_delivery
+from app.blueprints.support.schemas import serialize_support_ticket
 from app.blueprints.vendors.schemas import serialize_vendor_kyc_submission
 
 
@@ -95,6 +130,28 @@ def _add_audit_log(*, action: str, entity_type: str, entity_id: int, metadata: d
     )
 
 
+def _serialize_user_brief(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "phone_number": user.phone_number,
+        "role": user.role.value,
+    }
+
+
+def _serialize_platform_setting(setting: PlatformSetting) -> dict:
+    return {
+        "id": setting.id,
+        "key": setting.key,
+        "value": setting.value,
+        "description": setting.description,
+        "is_public": setting.is_public,
+        "updated_by_user_id": setting.updated_by_user_id,
+        "updated_at": setting.updated_at.isoformat(),
+    }
+
+
 @admin_bp.get("/users")
 @role_required(UserRole.ADMIN.value)
 def list_users():
@@ -112,11 +169,7 @@ def list_users():
         {
             "items": [
                 {
-                    "id": user.id,
-                    "email": user.email,
-                    "full_name": user.full_name,
-                    "phone_number": user.phone_number,
-                    "role": user.role.value,
+                    **_serialize_user_brief(user),
                     "is_active": user.is_active,
                     "email_verified": user.email_verified,
                 }
@@ -124,6 +177,153 @@ def list_users():
             ]
         }
     )
+
+
+@admin_bp.get("/dashboard")
+@role_required(UserRole.ADMIN.value)
+def get_admin_dashboard():
+    """
+    Get the admin dashboard summary.
+    ---
+    tags:
+      - Admin
+    responses:
+      200:
+        description: Admin dashboard summary.
+    """
+    return jsonify({"item": build_admin_dashboard()})
+
+
+@admin_bp.get("/reports/overview")
+@role_required(UserRole.ADMIN.value)
+def get_admin_overview_report():
+    return jsonify({"item": build_admin_overview_report()})
+
+
+@admin_bp.get("/reports/vendors-performance")
+@role_required(UserRole.ADMIN.value)
+def get_admin_vendor_performance_report():
+    limit = request.args.get("limit", default=10, type=int)
+    if limit <= 0:
+        return validation_error({"limit": "limit must be a positive integer."})
+    return jsonify({"items": list_vendor_performance(limit=limit)})
+
+
+@admin_bp.get("/operations/queues")
+@role_required(UserRole.ADMIN.value)
+def get_admin_operations_queues():
+    return jsonify({"item": build_admin_operations_queues()})
+
+
+@admin_bp.get("/logs/mpesa")
+@role_required(UserRole.ADMIN.value)
+def get_mpesa_logs():
+    limit = request.args.get("limit", default=100, type=int)
+    if limit <= 0:
+        return validation_error({"limit": "limit must be a positive integer."})
+    return jsonify({"item": tail_mpesa_logs(limit=min(limit, 500))})
+
+
+@admin_bp.post("/notifications/bulk")
+@role_required(UserRole.ADMIN.value)
+def send_bulk_notifications():
+    """
+    Send bulk notifications to users by role or explicit selection.
+    ---
+    tags:
+      - Admin
+    responses:
+      200:
+        description: Bulk notification dispatch prepared.
+    """
+    payload = validate_bulk_notification_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    query = User.query.filter(User.is_active.is_(True))
+    if payload["role"]:
+        query = query.filter(User.role == UserRole(payload["role"]))
+    if payload["user_ids"]:
+        query = query.filter(User.id.in_(payload["user_ids"]))
+
+    users = query.order_by(User.created_at.asc(), User.id.asc()).all()
+    results = dispatch_bulk_notification(
+        users=users,
+        notification_type=NotificationType.ADMIN_ANNOUNCEMENT,
+        title=payload["title"],
+        message=payload["message"],
+        email_subject=payload["subject"],
+        email_template="admin_announcement",
+        email_context={"message": payload["message"], "title": payload["title"]},
+        sms_message=payload["sms_message"],
+        is_marketing=payload["is_marketing"],
+        channels=set(payload["channels"]),
+    )
+    _add_audit_log(
+        action="admin.notifications_bulk_sent",
+        entity_type="notification",
+        entity_id=0,
+        metadata={
+            "channels": payload["channels"],
+            "role": payload["role"],
+            "user_ids": payload["user_ids"],
+            "targeted_count": results["targeted_count"],
+            "is_marketing": payload["is_marketing"],
+        },
+    )
+    db.session.commit()
+    return jsonify(results)
+
+
+@admin_bp.post("/emails/bulk")
+@role_required(UserRole.ADMIN.value)
+def send_bulk_email_campaign():
+    """
+    Send a bulk email campaign to users by role or explicit selection.
+    ---
+    tags:
+      - Admin
+    responses:
+      200:
+        description: Bulk email campaign processed.
+    """
+    payload = validate_bulk_email_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    query = User.query.filter(User.is_active.is_(True))
+    if payload["role"]:
+        query = query.filter(User.role == UserRole(payload["role"]))
+    if payload["user_ids"]:
+        query = query.filter(User.id.in_(payload["user_ids"]))
+
+    users = query.order_by(User.created_at.asc(), User.id.asc()).all()
+    results = dispatch_bulk_email_campaign(
+        users=users,
+        subject=payload["subject"],
+        headline=payload["headline"],
+        message=payload["message"],
+        preheader=payload["preheader"],
+        is_marketing=payload["is_marketing"],
+        cta_label=payload["cta_label"],
+        cta_url=payload["cta_url"],
+        dry_run=payload["dry_run"],
+    )
+    _add_audit_log(
+        action="admin.bulk_email_sent",
+        entity_type="notification",
+        entity_id=0,
+        metadata={
+            "role": payload["role"],
+            "user_ids": payload["user_ids"],
+            "targeted_count": results["targeted_count"],
+            "is_marketing": payload["is_marketing"],
+            "dry_run": payload["dry_run"],
+            "summary": results["summary"],
+        },
+    )
+    db.session.commit()
+    return jsonify(results)
 
 
 @admin_bp.patch("/users/<int:user_id>/role")
@@ -193,6 +393,215 @@ def update_user_active_state(user_id: int):
     )
     db.session.commit()
     return jsonify({"item": {"id": user.id, "email": user.email, "is_active": user.is_active}})
+
+
+@admin_bp.get("/settings")
+@role_required(UserRole.ADMIN.value)
+def list_platform_settings():
+    settings = PlatformSetting.query.order_by(PlatformSetting.key.asc()).all()
+    return jsonify({"items": [_serialize_platform_setting(setting) for setting in settings]})
+
+
+@admin_bp.post("/settings")
+@role_required(UserRole.ADMIN.value)
+def create_platform_setting():
+    payload = validate_platform_setting_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    existing = PlatformSetting.query.filter_by(key=payload["key"]).first()
+    if existing is not None:
+        return validation_error({"key": "A platform setting with that key already exists."})
+
+    setting = PlatformSetting(
+        key=payload["key"],
+        value=payload["value"],
+        description=payload["description"],
+        is_public=payload["is_public"],
+        updated_by_user_id=g.current_user.id,
+    )
+    db.session.add(setting)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.platform_setting_created",
+        entity_type="platform_setting",
+        entity_id=setting.id,
+        metadata={"key": setting.key, "is_public": setting.is_public},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_platform_setting(setting)}), 201
+
+
+@admin_bp.patch("/settings/<string:key>")
+@role_required(UserRole.ADMIN.value)
+def update_platform_setting(key: str):
+    payload = validate_platform_setting_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    setting = PlatformSetting.query.filter_by(key=key).first()
+    if setting is None:
+        return _not_found("Platform setting not found.")
+
+    for field in payload["provided_fields"]:
+        setattr(setting, field, payload[field])
+    setting.updated_by_user_id = g.current_user.id
+    _add_audit_log(
+        action="admin.platform_setting_updated",
+        entity_type="platform_setting",
+        entity_id=setting.id,
+        metadata={"key": setting.key, "is_public": setting.is_public},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_platform_setting(setting)})
+
+
+@admin_bp.get("/recommendations/settings")
+@role_required(UserRole.ADMIN.value)
+def list_recommendation_settings():
+    return jsonify({"items": serialize_recommendation_settings()})
+
+
+@admin_bp.patch("/recommendations/settings")
+@role_required(UserRole.ADMIN.value)
+def update_recommendation_settings():
+    payload = validate_recommendation_settings_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    items = []
+    for field, value in payload.items():
+        db_key = RECOMMENDATION_SETTING_KEYS[field]["db_key"]
+        setting = PlatformSetting.query.filter_by(key=db_key).first()
+        if setting is None:
+            setting = PlatformSetting(
+                key=db_key,
+                value=str(value),
+                description=f"Recommendation setting for {field}.",
+                is_public=False,
+                updated_by_user_id=g.current_user.id,
+            )
+            db.session.add(setting)
+            db.session.flush()
+        else:
+            setting.value = str(value)
+            setting.updated_by_user_id = g.current_user.id
+        items.append(setting)
+
+    _add_audit_log(
+        action="admin.recommendation_settings_updated",
+        entity_type="platform_setting",
+        entity_id=0,
+        metadata={"fields": sorted(payload.keys())},
+    )
+    db.session.commit()
+    return jsonify({"items": serialize_recommendation_settings()})
+
+
+@admin_bp.get("/recommendations/metrics")
+@role_required(UserRole.ADMIN.value)
+def get_recommendation_metrics():
+    days = request.args.get("days", default=30, type=int)
+    if days <= 0:
+        return validation_error({"days": "days must be a positive integer."})
+    return jsonify({"item": summarize_recommendation_metrics(days=days)})
+
+
+@admin_bp.get("/support-tickets")
+@role_required(UserRole.ADMIN.value)
+def list_support_tickets():
+    status = str(request.args.get("status") or "").strip().lower() or None
+    query = SupportTicket.query
+    if status:
+        allowed_statuses = {member.value for member in SupportTicketStatus}
+        if status not in allowed_statuses:
+            return validation_error({"status": "status must be a supported support ticket status."})
+        query = query.filter(SupportTicket.status == SupportTicketStatus(status))
+
+    tickets = query.order_by(SupportTicket.created_at.desc(), SupportTicket.id.desc()).all()
+    return jsonify({"items": [serialize_support_ticket(ticket) for ticket in tickets]})
+
+
+@admin_bp.get("/notification-deliveries")
+@role_required(UserRole.ADMIN.value)
+def list_notification_deliveries():
+    status = str(request.args.get("status") or "").strip().lower() or None
+    channel = str(request.args.get("channel") or "").strip().lower() or None
+    query = NotificationDelivery.query
+
+    if status:
+        allowed_statuses = {member.value for member in NotificationDeliveryStatus}
+        if status not in allowed_statuses:
+            return validation_error({"status": "status must be a supported notification delivery status."})
+        query = query.filter(NotificationDelivery.status == NotificationDeliveryStatus(status))
+
+    if channel:
+        allowed_channels = {member.value for member in NotificationChannel}
+        if channel not in allowed_channels:
+            return validation_error({"channel": "channel must be in_app, email, or sms."})
+        query = query.filter(NotificationDelivery.channel == NotificationChannel(channel))
+
+    deliveries = query.order_by(NotificationDelivery.created_at.desc(), NotificationDelivery.id.desc()).all()
+    return jsonify(
+        {
+            "items": [serialize_notification_delivery(delivery) for delivery in deliveries],
+            "summary": {"total": len(deliveries)},
+        }
+    )
+
+
+@admin_bp.post("/notification-deliveries/retry")
+@role_required(UserRole.ADMIN.value)
+def retry_failed_notification_delivery():
+    payload = validate_notification_delivery_retry_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    delivery = db.session.get(NotificationDelivery, payload["delivery_id"])
+    if delivery is None:
+        return _not_found("Notification delivery not found.")
+
+    result, error = retry_notification_delivery(delivery)
+    if error is not None:
+        return validation_error({"delivery": error})
+
+    _add_audit_log(
+        action="admin.notification_delivery_retried",
+        entity_type="notification_delivery",
+        entity_id=delivery.id,
+        metadata={"channel": delivery.channel.value, "status": delivery.status.value},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_notification_delivery(delivery), "delivery": result})
+
+
+@admin_bp.patch("/support-tickets/<int:ticket_id>/status")
+@role_required(UserRole.ADMIN.value)
+def update_support_ticket_status(ticket_id: int):
+    payload = validate_support_ticket_status_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    ticket = db.session.get(SupportTicket, ticket_id)
+    if ticket is None:
+        return _not_found("Support ticket not found.")
+
+    ticket.status = SupportTicketStatus(payload["status"])
+    ticket.admin_note = payload["admin_note"]
+    if ticket.status in {SupportTicketStatus.RESOLVED, SupportTicketStatus.CLOSED}:
+        ticket.resolved_at = datetime.now(timezone.utc)
+    else:
+        ticket.resolved_at = None
+
+    _add_audit_log(
+        action="admin.support_ticket_updated",
+        entity_type="support_ticket",
+        entity_id=ticket.id,
+        metadata={"status": ticket.status.value, "email": ticket.email},
+    )
+    notify_support_ticket_updated(ticket)
+    db.session.commit()
+    return jsonify({"item": serialize_support_ticket(ticket)})
 
 
 @admin_bp.get("/vendors")
@@ -988,5 +1397,6 @@ def update_refund_status(refund_id: int):
         entity_id=refund.id,
         metadata={"status": refund.status.value, "order_id": refund.order_id},
     )
+    notify_refund_updated(refund)
     db.session.commit()
     return jsonify({"item": serialize_refund(refund)})

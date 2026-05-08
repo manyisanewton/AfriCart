@@ -1,9 +1,20 @@
 from flask import g, jsonify
 
+from app.blueprints.auth.helpers import validation_error
 from app.blueprints.notifications import notifications_bp
+from app.blueprints.notifications.schemas import (
+    serialize_notification_delivery,
+    serialize_notification_preferences,
+    validate_notification_preferences_payload,
+)
 from app.blueprints.notifications.push import mark_notification_read
 from app.middleware.auth_required import auth_required
-from app.models import Notification
+from app.models import Notification, NotificationDelivery
+from app.services.notification_dispatch_service import (
+    get_or_create_notification_preferences,
+    update_notification_preferences,
+)
+from app.utils.api import get_json_payload
 
 
 def serialize_notification(notification: Notification) -> dict:
@@ -89,3 +100,70 @@ def mark_all_notifications_read():
     from app.extensions import db
     db.session.commit()
     return jsonify({"updated_count": len(notifications)})
+
+
+@notifications_bp.get("/preferences")
+@auth_required
+def get_notification_preferences():
+    """
+    Get the authenticated user's notification preferences.
+    ---
+    tags:
+      - Notifications
+    responses:
+      200:
+        description: Notification preference settings.
+    """
+    preferences = get_or_create_notification_preferences(g.current_user)
+    from app.extensions import db
+
+    db.session.commit()
+    return jsonify({"item": serialize_notification_preferences(preferences)})
+
+
+@notifications_bp.patch("/preferences")
+@auth_required
+def update_preferences():
+    """
+    Update the authenticated user's notification preferences.
+    ---
+    tags:
+      - Notifications
+    responses:
+      200:
+        description: Notification preference settings updated.
+    """
+    payload = validate_notification_preferences_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    preferences = update_notification_preferences(g.current_user, payload)
+    from app.extensions import db
+
+    db.session.commit()
+    return jsonify({"item": serialize_notification_preferences(preferences)})
+
+
+@notifications_bp.get("/deliveries")
+@auth_required
+def list_notification_deliveries():
+    """
+    List the authenticated user's delivery records.
+    ---
+    tags:
+      - Notifications
+    responses:
+      200:
+        description: Notification delivery list.
+    """
+    deliveries = (
+        NotificationDelivery.query.filter_by(user_id=g.current_user.id)
+        .order_by(NotificationDelivery.created_at.desc(), NotificationDelivery.id.desc())
+        .all()
+    )
+    return jsonify(
+        {
+            "items": [serialize_notification_delivery(delivery) for delivery in deliveries],
+            "summary": {"total": len(deliveries)},
+        }
+    )

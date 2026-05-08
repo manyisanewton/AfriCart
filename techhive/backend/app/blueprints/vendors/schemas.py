@@ -164,6 +164,137 @@ def validate_stock_payload(payload: dict | None) -> dict:
     return {"stock_quantity": stock_quantity}
 
 
+def validate_vendor_variant_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    errors = {}
+
+    name = str(data.get("name", "")).strip()
+    sku = str(data.get("sku", "")).strip()
+    if not name:
+        errors["name"] = "name is required."
+    if not sku:
+        errors["sku"] = "sku is required."
+
+    try:
+        price = float(data.get("price"))
+        if price < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors["price"] = "price must be a non-negative number."
+        price = None
+
+    try:
+        stock_quantity = int(data.get("stock_quantity"))
+        if stock_quantity < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors["stock_quantity"] = "stock_quantity must be a non-negative integer."
+        stock_quantity = None
+
+    if errors:
+        return {"errors": errors}
+
+    return {
+        "name": name,
+        "sku": sku,
+        "price": price,
+        "stock_quantity": stock_quantity,
+        "attribute_summary": str(data.get("attribute_summary") or "").strip() or None,
+    }
+
+
+def validate_vendor_variant_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    normalized = {}
+    errors = {}
+    field_names = {"name", "sku", "price", "stock_quantity", "attribute_summary"}
+    provided_fields = {field for field in field_names if field in data}
+
+    if not provided_fields:
+        return {"errors": {"variant": "At least one variant field must be provided."}}
+
+    if "name" in provided_fields:
+        name = str(data.get("name", "")).strip()
+        if not name:
+            errors["name"] = "name cannot be blank."
+        else:
+            normalized["name"] = name
+
+    if "sku" in provided_fields:
+        sku = str(data.get("sku", "")).strip()
+        if not sku:
+            errors["sku"] = "sku cannot be blank."
+        else:
+            normalized["sku"] = sku
+
+    if "price" in provided_fields:
+        try:
+            price = float(data.get("price"))
+            if price < 0:
+                raise ValueError
+            normalized["price"] = price
+        except (TypeError, ValueError):
+            errors["price"] = "price must be a non-negative number."
+
+    if "stock_quantity" in provided_fields:
+        try:
+            stock_quantity = int(data.get("stock_quantity"))
+            if stock_quantity < 0:
+                raise ValueError
+            normalized["stock_quantity"] = stock_quantity
+        except (TypeError, ValueError):
+            errors["stock_quantity"] = "stock_quantity must be a non-negative integer."
+
+    if "attribute_summary" in provided_fields:
+        normalized["attribute_summary"] = str(data.get("attribute_summary") or "").strip() or None
+
+    if errors:
+        return {"errors": errors}
+
+    normalized["provided_fields"] = provided_fields
+    return normalized
+
+
+def validate_vendor_image_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    normalized = {}
+    errors = {}
+    field_names = {"alt_text", "is_primary", "sort_order"}
+    provided_fields = {field for field in field_names if field in data}
+
+    if not provided_fields:
+        return {"errors": {"image": "At least one image field must be provided."}}
+
+    if "alt_text" in provided_fields:
+        normalized["alt_text"] = str(data.get("alt_text") or "").strip() or None
+
+    if "is_primary" in provided_fields:
+        normalized["is_primary"] = bool(data.get("is_primary"))
+
+    if "sort_order" in provided_fields:
+        try:
+            normalized["sort_order"] = int(data.get("sort_order"))
+        except (TypeError, ValueError):
+            errors["sort_order"] = "sort_order must be an integer."
+
+    if errors:
+        return {"errors": errors}
+
+    normalized["provided_fields"] = provided_fields
+    return normalized
+
+
+def validate_vendor_bulk_import_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return {"errors": {"items": "items must be a non-empty list."}}
+    return {
+        "items": items,
+        "update_existing": bool(data.get("update_existing", False)),
+    }
+
+
 def validate_vendor_kyc_payload(payload: dict | None) -> dict:
     data = payload or {}
     required_fields = [

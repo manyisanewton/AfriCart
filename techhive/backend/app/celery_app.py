@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from flask import Flask
+from app.services.runtime_config_service import get_runtime_config_report
 
 
 try:
@@ -81,4 +82,5 @@ def get_task_queue_status(app: Flask) -> dict:
                 ],
             }
         },
+        "runtime_config": get_runtime_config_report(app),
     }

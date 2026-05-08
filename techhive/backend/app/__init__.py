@@ -1,12 +1,14 @@
 import logging
+from pathlib import Path
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 from sqlalchemy import text
 
 from app.blueprints.addresses import addresses_bp
 from app.blueprints.auth import auth_bp
 from app.blueprints.admin import admin_bp
 from app.blueprints.cart import cart_bp
+from app.blueprints.customers import customers_bp
 from app.blueprints.delivery import delivery_bp
 from app.blueprints.notifications import notifications_bp
 from app.blueprints.orders import orders_bp
@@ -14,6 +16,7 @@ from app.blueprints.payments import payments_bp
 from app.blueprints.products import products_bp
 from app.blueprints.promotions import promotions_bp
 from app.blueprints.reviews import reviews_bp
+from app.blueprints.support import support_bp
 from app.blueprints.vendors import vendors_bp
 from app.extensions import db, migrate, swagger
 from app.middleware.cors_handler import register_cors
@@ -24,6 +27,10 @@ from app.services.error_monitoring_service import (
     register_request_context,
 )
 from app.services.payment_metrics_service import render_payment_metrics_lines
+from app.services.runtime_config_service import (
+    get_runtime_config_report,
+    validate_runtime_configuration,
+)
 from app.utils.constants import SECURITY_HEADERS
 from app.utils.error_handlers import register_error_handlers
 from config import get_config
@@ -34,6 +41,7 @@ def create_app(config_name: str | None = None) -> Flask:
     app.config.from_object(get_config(config_name))
 
     configure_logging(app)
+    validate_runtime_configuration(app)
     register_extensions(app)
     register_security(app)
     initialize_error_monitoring(app)
@@ -83,6 +91,7 @@ def register_routes(app: Flask) -> None:
     app.register_blueprint(addresses_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(cart_bp)
+    app.register_blueprint(customers_bp)
     app.register_blueprint(delivery_bp)
     app.register_blueprint(notifications_bp)
     app.register_blueprint(orders_bp)
@@ -90,6 +99,7 @@ def register_routes(app: Flask) -> None:
     app.register_blueprint(products_bp)
     app.register_blueprint(promotions_bp)
     app.register_blueprint(reviews_bp)
+    app.register_blueprint(support_bp)
     app.register_blueprint(vendors_bp)
 
     @app.get("/health")
@@ -155,7 +165,13 @@ def register_routes(app: Flask) -> None:
             {
                 "status": "ready",
                 "service": app.config["APP_NAME"],
-                "checks": {"database": "ok"},
+                "checks": {
+                    "database": "ok",
+                    "runtime": {
+                        "valid": get_runtime_config_report(app)["valid"],
+                        "warning_count": get_runtime_config_report(app)["warning_count"],
+                    },
+                },
             }
         )
 
@@ -205,6 +221,11 @@ def register_routes(app: Flask) -> None:
                 "task_queue": get_task_queue_status(app),
             }
         )
+
+    @app.get("/media/<path:storage_path>")
+    def serve_media(storage_path: str):
+        media_root = Path(app.config["STORAGE_LOCAL_ROOT"])
+        return send_from_directory(media_root, storage_path)
 
     @app.get("/")
     def root():

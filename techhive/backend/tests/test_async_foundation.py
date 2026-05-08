@@ -6,6 +6,7 @@ from app.tasks import (
     send_order_confirmation_email,
     send_payment_status_sms,
 )
+from app.services.sms_service import normalize_phone_number
 
 
 def test_worker_health_endpoint(client):
@@ -58,3 +59,8 @@ def test_async_task_helpers_return_expected_payloads(app):
     assert report_payload["total_orders"] == 8
     assert cleanup_payload["task_name"] == "cleanup.notifications"
     assert image_payload["transforms"] == ["thumbnail", "webp"]
+
+
+def test_phone_normalization_supports_twilio_and_kenyan_numbers():
+    assert normalize_phone_number("(814) 399-8680") == "+18143998680"
+    assert normalize_phone_number("0799425417") == "+254799425417"

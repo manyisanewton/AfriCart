@@ -1,0 +1,12 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Order update" %}
+{% set preheader = preheader or message %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>{{ message }}</p>
+<div class="panel">
+  <strong>Order number</strong>
+  <p style="margin: 0 0 16px; font-size: 22px; font-weight: 700;">{{ order_number }}</p>
+  <span class="status-pill {{ status_tone or 'info' }}">{{ status_label }}</span>
+</div>
+{% endblock %}

@@ -1,4 +1,5 @@
 import os
+from email.utils import parseaddr
 from pathlib import Path
 
 
@@ -19,6 +20,39 @@ def load_environment(base_dir: Path = BASE_DIR) -> None:
 
 
 load_environment()
+
+
+def env_value(name: str, default=None, aliases: tuple[str, ...] = ()):
+    for key in (name, *aliases):
+        value = os.getenv(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def env_bool(name: str, default: str = "false", aliases: tuple[str, ...] = ()) -> bool:
+    return str(env_value(name, default, aliases=aliases)).lower() == "true"
+
+
+def env_int(name: str, default: str, aliases: tuple[str, ...] = ()) -> int:
+    return int(str(env_value(name, default, aliases=aliases)))
+
+
+def env_csv(name: str, default: str = "", aliases: tuple[str, ...] = ()) -> tuple[str, ...]:
+    value = str(env_value(name, default, aliases=aliases) or "")
+    items = [item.strip().lower() for item in value.split(",")]
+    return tuple(item for item in items if item)
+
+
+def resolve_sender_parts() -> tuple[str, str]:
+    sender_value = env_value("SMTP_FROM_EMAIL", aliases=("MAIL_DEFAULT_SENDER",)) or "no-reply@techhive.local"
+    parsed_name, parsed_email = parseaddr(sender_value)
+    sender_email = parsed_email or sender_value
+    sender_name = env_value("SMTP_FROM_NAME", aliases=("MAIL_DEFAULT_SENDER_NAME",)) or parsed_name or "TechHive"
+    return sender_name, sender_email
+
+
+SMTP_FROM_NAME_RESOLVED, SMTP_FROM_EMAIL_RESOLVED = resolve_sender_parts()
 
 
 class Config:
@@ -67,6 +101,11 @@ class Config:
     )
     MPESA_ACCOUNT_REFERENCE = os.getenv("MPESA_ACCOUNT_REFERENCE", "TechHive")
     MPESA_TRANSACTION_DESC = os.getenv("MPESA_TRANSACTION_DESC", "TechHive payment")
+    PAYMENT_ENABLED_METHODS = env_csv(
+        "PAYMENT_ENABLED_METHODS",
+        "mpesa,manual,cash_on_delivery,stripe,flutterwave,paypal",
+    )
+    PAYMENT_PRIMARY_METHOD = str(os.getenv("PAYMENT_PRIMARY_METHOD", "mpesa")).strip().lower()
     MPESA_ALLOW_UNSIGNED_CALLBACKS = (
         os.getenv("MPESA_ALLOW_UNSIGNED_CALLBACKS", "true").lower() == "true"
     )
@@ -110,16 +149,49 @@ class Config:
     CELERY_TASK_ALWAYS_EAGER = (
         os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true"
     )
+    SMTP_HOST = env_value("SMTP_HOST", aliases=("MAIL_SERVER",))
+    SMTP_PORT = env_int("SMTP_PORT", "587", aliases=("MAIL_PORT",))
+    SMTP_USERNAME = env_value("SMTP_USERNAME", aliases=("MAIL_USERNAME",))
+    SMTP_PASSWORD = env_value("SMTP_PASSWORD", aliases=("MAIL_PASSWORD",))
+    SMTP_USE_TLS = env_bool("SMTP_USE_TLS", "true", aliases=("MAIL_USE_TLS",))
+    SMTP_USE_SSL = env_bool("SMTP_USE_SSL", "false", aliases=("MAIL_USE_SSL",))
+    SMTP_TIMEOUT_SECONDS = env_int("SMTP_TIMEOUT_SECONDS", "20", aliases=("MAIL_TIMEOUT_SECONDS",))
+    SMTP_FROM_EMAIL = SMTP_FROM_EMAIL_RESOLVED
+    SMTP_FROM_NAME = SMTP_FROM_NAME_RESOLVED
+    SMTP_REPLY_TO = env_value("SMTP_REPLY_TO", aliases=("MAIL_REPLY_TO",))
+    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+    TWILIO_FROM_NUMBER = env_value("TWILIO_FROM_NUMBER", aliases=("TWILIO_PHONE_NUMBER",))
+    TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
+    TWILIO_API_BASE_URL = os.getenv("TWILIO_API_BASE_URL", "https://api.twilio.com")
+    BULK_NOTIFICATION_BATCH_SIZE = int(os.getenv("BULK_NOTIFICATION_BATCH_SIZE", "250"))
+    STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local")
+    STORAGE_LOCAL_ROOT = os.getenv("STORAGE_LOCAL_ROOT", str(BASE_DIR / "media"))
+    STORAGE_PUBLIC_BASE_URL = os.getenv("STORAGE_PUBLIC_BASE_URL", "/media")
+    STORAGE_MAX_UPLOAD_BYTES = int(os.getenv("STORAGE_MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
+    MPESA_LOG_DIR = os.getenv("MPESA_LOG_DIR", str(BASE_DIR / "logs"))
+    MPESA_LOG_FILE = os.getenv("MPESA_LOG_FILE", "mpesa.log")
+    MPESA_LOG_MAX_BYTES = int(os.getenv("MPESA_LOG_MAX_BYTES", "1000000"))
+    MPESA_LOG_BACKUP_COUNT = int(os.getenv("MPESA_LOG_BACKUP_COUNT", "5"))
 
 
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    PAYMENT_ENABLED_METHODS = ("mpesa", "manual", "cash_on_delivery", "stripe", "flutterwave", "paypal")
     PAYMENTS_ALLOW_SIMULATION = True
     MPESA_CONSUMER_KEY = None
     MPESA_CONSUMER_SECRET = None
     MPESA_SHORTCODE = None
     MPESA_PASSKEY = None
+    SMTP_HOST = None
+    SMTP_USERNAME = None
+    SMTP_PASSWORD = None
+    TWILIO_ACCOUNT_SID = None
+    TWILIO_AUTH_TOKEN = None
+    TWILIO_FROM_NUMBER = None
+    TWILIO_MESSAGING_SERVICE_SID = None
+    STORAGE_LOCAL_ROOT = str(BASE_DIR / ".test_media")
 
 
 class DevelopmentConfig(Config):

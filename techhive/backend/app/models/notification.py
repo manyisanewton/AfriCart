@@ -14,6 +14,7 @@ class NotificationType(str, Enum):
     PAYMENT_CREATED = "payment_created"
     PAYMENT_PAID = "payment_paid"
     PAYMENT_FAILED = "payment_failed"
+    ADMIN_ANNOUNCEMENT = "admin_announcement"
 
 
 class Notification(db.Model):
@@ -32,3 +33,9 @@ class Notification(db.Model):
     read_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     user = db.relationship("User", back_populates="notifications")
+    deliveries = db.relationship(
+        "NotificationDelivery",
+        back_populates="notification",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
