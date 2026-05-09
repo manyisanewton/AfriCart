@@ -1,0 +1,65 @@
+.bottom-nav {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .bottom-nav {
+        display: flex;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: #0b1b3a;
+        border-top: 2px solid #f97316;
+        z-index: 999;
+        justify-content: space-around;
+        align-items: center;
+        padding: 0 8px;
+    }
+    .bottom-nav-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        color: rgba(255, 255, 255, 0.6);
+        text-decoration: none;
+        flex: 1;
+        padding: 6px 0;
+        transition: color 0.2s ease;
+    }
+    .bottom-nav-item.active {
+        color: #f97316;
+    }
+    .bottom-nav-item:hover {
+        color: #f97316;
+    }
+    .bottom-nav-icon-wrap {
+        position: relative;
+    }
+    .bottom-nav-badge {
+        position: absolute;
+        top: -6px;
+        right: -8px;
+        background: #f97316;
+        color: #fff;
+        font-size: 0.65rem;
+        font-weight: 700;
+        min-width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 3px;
+    }
+    .bottom-nav-label {
+        font-size: 0.7rem;
+        font-weight: 500;
+    }
+    /* Push page content up so bottom nav doesn't cover it */
+    main {
+        padding-bottom: 60px;
+    }
+}

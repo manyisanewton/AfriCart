@@ -1,0 +1,15 @@
+.app-layout {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+main {
+    margin-top: 80px;
+}
+
+.header {
+    background: var(--color-dark);
+    color: white;
+    padding: 18px 0;
+}
