@@ -1,0 +1,139 @@
+import type { TableColumn } from "@nuxt/ui";
+import type { ProductTableRow } from "~/types/ProductTableRow";
+import { useSortableHeader } from "~/composables/useSortableHeader";
+import type { SortBy, SortDir } from "~/types/Table";
+
+export function getProductTableColumns({
+  onDelete,
+  onEdit,
+  sortBy,
+  sortDir,
+  components,
+}: {
+  onDelete: (product: ProductTableRow, event?: Event) => void;
+  onEdit: (product: ProductTableRow, event?: Event) => void;
+  sortBy: Ref<SortBy>;
+  sortDir: Ref<SortDir>;
+  components: unknown[];
+}): TableColumn<ProductTableRow>[] {
+  const [UButton, UBadge, UCheckbox, UAvatar] = components;
+  const { renderSortableHeader } = useSortableHeader(UButton!, sortBy, sortDir);
+  return [
+    {
+      id: "select",
+      header: ({ table }) =>
+        h(UCheckbox as Component, {
+          modelValue: table.getIsSomePageRowsSelected()
+            ? "indeterminate"
+            : table.getIsAllPageRowsSelected(),
+          "onUpdate:modelValue": (value: boolean | "indeterminate") =>
+            table.toggleAllPageRowsSelected(!!value),
+          "aria-label": "Select all",
+        }),
+      cell: ({ row }) =>
+        h(UCheckbox as Component, {
+          modelValue: row.getIsSelected(),
+          "onUpdate:modelValue": (value: boolean | "indeterminate") =>
+            row.toggleSelected(!!value),
+          "aria-label": "Select row",
+        }),
+    },
+    {
+      accessorKey: "id",
+      header: ({ column }) => renderSortableHeader("Product #", column),
+      cell: ({ row }) =>
+        h("span", { class: "font-mono text-xs text-slate-500" }, `#${row.original.id}`),
+    },
+    {
+      accessorKey: "name",
+      header: ({ column }) => renderSortableHeader("Product", column),
+      cell: ({ row }) =>
+        h("div", { class: "min-w-64 flex items-center gap-3" }, [
+          h(UAvatar as Component, {
+            src: row.original.imageUrl,
+            alt: row.original.name,
+            size: "md",
+            imgClass: "object-cover",
+          }),
+          h("div", { class: "min-w-0" }, [
+            h("span", { class: "block truncate font-semibold text-slate-950" }, row.original.name),
+            h("span", { class: "block truncate text-xs text-slate-500" }, row.original.category || "Uncategorized"),
+          ]),
+        ]),
+    },
+    {
+      accessorKey: "sku",
+      header: ({ column }) => renderSortableHeader("SKU", column),
+      cell: ({ row }) => h("span", { class: "font-mono text-xs text-slate-600" }, row.original.sku || "-"),
+    },
+    {
+      accessorKey: "category",
+      header: ({ column }) => renderSortableHeader("Category", column),
+      cell: ({ row }) => h("span", { class: "text-slate-600" }, row.original.category || "Uncategorized"),
+    },
+    {
+      accessorKey: "status",
+      header: ({ column }) => renderSortableHeader("Status", column),
+      cell: ({ row }) => {
+        const statusMap: Record<string, string> = {
+          Active: "success",
+          Draft: "warning",
+        };
+        const color = statusMap[row.original.status] || "neutral";
+        return h(UBadge as any, {
+          label: row.original.status,
+          color,
+          variant: "soft",
+        });
+      },
+    },
+    {
+      accessorKey: "stock",
+      header: ({ column }) => renderSortableHeader("Stock", column),
+      cell: ({ row }) => {
+        const stock = row.original.stock;
+        const color =
+          stock > 50 ? "success" : stock > 10 ? "warning" : "error";
+        return h(UBadge as Component, {
+          label: stock.toString(),
+          color,
+          variant: "soft",
+        });
+      },
+    },
+    {
+      accessorKey: "price",
+      header: ({ column }) => renderSortableHeader("Price", column),
+      cell: ({ row }) => h("span", { class: "font-semibold text-slate-950" }, formatMoney(row.original.price, row.original.currency || "KES")),
+    },
+    {
+      id: "actions",
+      header: () => h("span", { class: "sr-only" }, "Actions"),
+      cell: ({ row }) =>
+        h("div", { class: "flex items-center justify-end gap-2" }, [
+          h(UButton as Component, {
+            icon: "i-lucide-pencil",
+            color: "neutral",
+            variant: "ghost",
+            size: "xs",
+            "aria-label": `Edit ${row.original.name}`,
+            onClick: (event: Event) => {
+              event.stopPropagation();
+              onEdit(row.original, event);
+            },
+          }),
+          h(UButton as Component, {
+            icon: "i-lucide-trash-2",
+            color: "error",
+            variant: "ghost",
+            size: "xs",
+            "aria-label": `Delete ${row.original.name}`,
+            onClick: (event: Event) => {
+              event.stopPropagation();
+              onDelete(row.original, event);
+            },
+          }),
+        ]),
+    },
+  ];
+}

@@ -4,7 +4,7 @@ import { productAPI } from "../services/api";
 import HeroBanner from "../components/home/HeroBanner";
 import FeaturedCategories from "../components/home/FeaturedCategories";
 import TrendingProducts from "../components/home/TrendingProducts";
-import "../styles/homepage.css";
+import "../styles/homePage.css";
 
 const FALLBACK_IMAGE = "https://placehold.co/400x400?text=No+Image";
 
