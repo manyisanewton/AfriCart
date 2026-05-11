@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from app.models import OrderStatus, RefundStatus, UserRole, VendorKYCStatus, VendorStatus
+from app.models import (
+    OrderStatus,
+    RefundStatus,
+    SupportTicketStatus,
+    UserRole,
+    VendorKYCStatus,
+    VendorStatus,
+)
 
 
 def validate_role_payload(payload: dict | None) -> dict:
@@ -19,6 +26,214 @@ def validate_vendor_status_payload(payload: dict | None) -> dict:
     if status not in allowed_statuses:
         return {"errors": {"status": "status must be a supported vendor status."}}
     return {"status": status}
+
+
+def validate_platform_setting_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    key = str(data.get("key", "")).strip()
+    value = data.get("value")
+    if not key:
+        return {"errors": {"key": "key is required."}}
+    if value in (None, ""):
+        return {"errors": {"value": "value is required."}}
+    return {
+        "key": key,
+        "value": str(value),
+        "description": str(data.get("description") or "").strip() or None,
+        "is_public": bool(data.get("is_public", False)),
+    }
+
+
+def validate_platform_setting_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    field_names = {"value", "description", "is_public"}
+    provided_fields = {field for field in field_names if field in data}
+    if not provided_fields:
+        return {"errors": {"setting": "At least one setting field must be provided."}}
+
+    normalized = {"provided_fields": provided_fields}
+    if "value" in provided_fields:
+        if data.get("value") in (None, ""):
+            return {"errors": {"value": "value is required."}}
+        normalized["value"] = str(data.get("value"))
+    if "description" in provided_fields:
+        normalized["description"] = str(data.get("description") or "").strip() or None
+    if "is_public" in provided_fields:
+        normalized["is_public"] = bool(data.get("is_public"))
+    return normalized
+
+
+def validate_recommendation_settings_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    allowed_fields = {
+        "popularity_blend_weight",
+        "trending_window_days",
+        "trending_reason_threshold",
+        "max_brand_recommendations",
+        "max_vendor_recommendations",
+        "max_category_recommendations",
+    }
+    provided_fields = {field for field in allowed_fields if field in data}
+    if not provided_fields:
+        return {"errors": {"settings": "At least one recommendation setting must be provided."}}
+
+    errors = {}
+    normalized = {}
+    for field in provided_fields:
+        value = data.get(field)
+        try:
+            if field in {"trending_window_days", "max_brand_recommendations", "max_vendor_recommendations", "max_category_recommendations"}:
+                normalized[field] = int(value)
+            else:
+                normalized[field] = float(value)
+        except (TypeError, ValueError):
+            errors[field] = f"{field} must be numeric."
+
+    if errors:
+        return {"errors": errors}
+    return normalized
+
+
+def validate_support_ticket_status_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    status = str(data.get("status", "")).strip().lower()
+    allowed_statuses = {member.value for member in SupportTicketStatus}
+    if status not in allowed_statuses:
+        return {"errors": {"status": "status must be a supported support ticket status."}}
+    return {
+        "status": status,
+        "admin_note": str(data.get("admin_note") or "").strip() or None,
+    }
+
+
+def validate_notification_delivery_retry_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    delivery_id = data.get("delivery_id")
+    try:
+        delivery_id = int(delivery_id)
+        if delivery_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return {"errors": {"delivery_id": "delivery_id must be a positive integer."}}
+    return {"delivery_id": delivery_id}
+
+
+def validate_bulk_notification_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    title = str(data.get("title", "")).strip()
+    message = str(data.get("message", "")).strip()
+    channels_raw = data.get("channels") or []
+    errors = {}
+
+    if not title:
+        errors["title"] = "title is required."
+    if not message:
+        errors["message"] = "message is required."
+    if not isinstance(channels_raw, list) or not channels_raw:
+        errors["channels"] = "channels must be a non-empty list."
+
+    allowed_channels = {"in_app", "email", "sms"}
+    channels = []
+    for channel in channels_raw if isinstance(channels_raw, list) else []:
+        normalized = str(channel).strip().lower()
+        if normalized not in allowed_channels:
+            errors["channels"] = "channels may only include in_app, email, or sms."
+            break
+        channels.append(normalized)
+
+    role = str(data.get("role") or "").strip().lower() or None
+    if role is not None:
+        allowed_roles = {member.value for member in UserRole}
+        if role not in allowed_roles:
+            errors["role"] = "role must be a supported user role."
+
+    user_ids = data.get("user_ids")
+    normalized_user_ids = None
+    if user_ids is not None:
+        if not isinstance(user_ids, list) or not user_ids:
+            errors["user_ids"] = "user_ids must be a non-empty list."
+        else:
+            normalized_user_ids = []
+            for value in user_ids:
+                try:
+                    user_id = int(value)
+                    if user_id <= 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors["user_ids"] = "user_ids must contain positive integers."
+                    break
+                normalized_user_ids.append(user_id)
+
+    if errors:
+        return {"errors": errors}
+
+    return {
+        "title": title,
+        "message": message,
+        "subject": str(data.get("subject") or "").strip() or title,
+        "channels": list(dict.fromkeys(channels)),
+        "role": role,
+        "user_ids": normalized_user_ids,
+        "sms_message": str(data.get("sms_message") or "").strip() or message,
+        "is_marketing": bool(data.get("is_marketing", False)),
+    }
+
+
+def validate_bulk_email_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    subject = str(data.get("subject", "")).strip()
+    headline = str(data.get("headline") or "").strip() or subject
+    message = str(data.get("message", "")).strip()
+    errors = {}
+
+    if not subject:
+        errors["subject"] = "subject is required."
+    if not message:
+        errors["message"] = "message is required."
+
+    role = str(data.get("role") or "").strip().lower() or None
+    if role is not None:
+        allowed_roles = {member.value for member in UserRole}
+        if role not in allowed_roles:
+            errors["role"] = "role must be a supported user role."
+
+    user_ids = data.get("user_ids")
+    normalized_user_ids = None
+    if user_ids is not None:
+        if not isinstance(user_ids, list) or not user_ids:
+            errors["user_ids"] = "user_ids must be a non-empty list."
+        else:
+            normalized_user_ids = []
+            for value in user_ids:
+                try:
+                    user_id = int(value)
+                    if user_id <= 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors["user_ids"] = "user_ids must contain positive integers."
+                    break
+                normalized_user_ids.append(user_id)
+
+    cta_label = str(data.get("cta_label") or "").strip() or None
+    cta_url = str(data.get("cta_url") or "").strip() or None
+    if bool(cta_label) != bool(cta_url):
+        errors["cta"] = "cta_label and cta_url must be provided together."
+
+    if errors:
+        return {"errors": errors}
+
+    return {
+        "subject": subject,
+        "headline": headline,
+        "message": message,
+        "preheader": str(data.get("preheader") or "").strip() or message,
+        "role": role,
+        "user_ids": normalized_user_ids,
+        "is_marketing": bool(data.get("is_marketing", False)),
+        "cta_label": cta_label,
+        "cta_url": cta_url,
+        "dry_run": bool(data.get("dry_run", False)),
+    }
 
 
 def validate_named_entity_payload(payload: dict | None) -> dict:

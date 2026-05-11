@@ -7,9 +7,14 @@ from urllib.request import Request, urlopen
 from flask import current_app
 
 from app.models import Payment
+from app.services.mpesa_logging_service import log_mpesa_debug, log_mpesa_error
 
 
 class MpesaConfigurationError(ValueError):
+    pass
+
+
+class MpesaValidationError(ValueError):
     pass
 
 
@@ -33,7 +38,7 @@ def normalize_mpesa_phone_number(phone_number: str) -> str:
     if value.startswith("0"):
         value = f"254{value[1:]}"
     if not value.isdigit() or len(value) != 12 or not value.startswith("254"):
-        raise MpesaConfigurationError("Phone number must be a valid Kenyan MSISDN.")
+        raise MpesaValidationError("Phone number must be a valid Kenyan MSISDN.")
     return value
 
 
@@ -90,7 +95,9 @@ def get_mpesa_access_token() -> str:
         with urlopen(request, timeout=15) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        log_mpesa_error("Failed to get access token", exc)
         raise MpesaGatewayError("Unable to obtain an M-Pesa access token.") from exc
+    log_mpesa_debug("Access token retrieved")
     return payload["access_token"]
 
 
@@ -134,7 +141,19 @@ def query_mpesa_payment_status(payment: Payment) -> dict:
         with urlopen(request, timeout=15) as response:
             mpesa_response = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        log_mpesa_error(
+            "Transaction status query failed",
+            exc,
+            payload={"checkout_request_id": payment.external_reference},
+        )
         raise MpesaGatewayError("Unable to query the M-Pesa STK push status.") from exc
+    log_mpesa_debug(
+        "Transaction status response received",
+        payload={
+            "checkout_request_id": payment.external_reference,
+            "response": mpesa_response,
+        },
+    )
 
     result_code = mpesa_response.get("ResultCode")
     result_desc = str(mpesa_response.get("ResultDesc") or "").strip() or None
@@ -212,6 +231,7 @@ def initiate_mpesa_payment(payment: Payment, callback_base_url: str, phone_numbe
         "AccountReference": f"{current_app.config['MPESA_ACCOUNT_REFERENCE']}-{payment.reference}",
         "TransactionDesc": current_app.config["MPESA_TRANSACTION_DESC"],
     }
+    log_mpesa_debug("Sending STK Push request", payload=payload)
     request = Request(
         f"{current_app.config['MPESA_BASE_URL']}/mpesa/stkpush/v1/processrequest",
         data=json.dumps(payload).encode("utf-8"),
@@ -225,12 +245,15 @@ def initiate_mpesa_payment(payment: Payment, callback_base_url: str, phone_numbe
         with urlopen(request, timeout=15) as response:
             mpesa_response = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        log_mpesa_error("STK Push request failed", exc, payload=payload)
         raise MpesaGatewayError("Unable to initiate the M-Pesa STK push request.") from exc
 
     if str(mpesa_response.get("ResponseCode") or "").strip() != "0":
+        log_mpesa_error("STK Push request was rejected", str(mpesa_response), payload=payload)
         raise MpesaGatewayError(
             str(mpesa_response.get("errorMessage") or mpesa_response.get("ResponseDescription") or "M-Pesa rejected the STK push request.")
         )
+    log_mpesa_debug("STK Push response received", payload=mpesa_response)
 
     return {
         "provider": "mpesa",

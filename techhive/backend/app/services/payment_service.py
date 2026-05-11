@@ -3,13 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from app.blueprints.notifications.push import create_notification
+from flask import current_app
+
 from app.blueprints.payments.helpers import dump_provider_response, generate_payment_reference
-from app.blueprints.payments.mpesa import MpesaConfigurationError, MpesaGatewayError
+from app.blueprints.payments.mpesa import (
+    MpesaConfigurationError,
+    MpesaGatewayError,
+    MpesaValidationError,
+    normalize_mpesa_phone_number,
+    validate_mpesa_configuration,
+)
 from app.services.commerce_state_service import transition_order, transition_payment
 from app.extensions import db
 from app.models import NotificationType, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
+from app.services.notification_dispatch_service import dispatch_user_notification
 from app.services.payment_reconciliation_service import build_payment_reconciliation_deadline
+from app.utils.helpers import format_money
 
 
 @dataclass
@@ -49,11 +58,22 @@ def apply_paid_state(
     payment.failure_code = None
     payment.failure_message = None
     payment.processed_at = datetime.now(timezone.utc)
-    create_notification(
-        user_id,
-        NotificationType.PAYMENT_PAID,
-        "Payment successful",
-        notification_message,
+    dispatch_user_notification(
+        user=payment.order.user,
+        notification_type=NotificationType.PAYMENT_PAID,
+        title="Payment successful",
+        message=notification_message,
+        email_subject=f"Payment received for order {payment.order.order_number}",
+        email_template="payment_status",
+        email_context={
+            "order_number": payment.order.order_number,
+            "payment_reference": payment.reference,
+            "amount": format_money(payment.amount),
+            "status_label": "Paid",
+            "status_tone": "success",
+            "headline": "Your payment has been confirmed",
+        },
+        sms_message=f"TechHive: payment for order {payment.order.order_number} was confirmed.",
     )
     return payment
 
@@ -75,11 +95,23 @@ def apply_failed_state(
     payment.failure_message = failure_message
     payment.processed_at = datetime.now(timezone.utc)
     payment.reconciliation_due_at = None
-    create_notification(
-        user_id,
-        NotificationType.PAYMENT_FAILED,
-        "Payment failed",
-        notification_message,
+    dispatch_user_notification(
+        user=payment.order.user,
+        notification_type=NotificationType.PAYMENT_FAILED,
+        title="Payment failed",
+        message=notification_message,
+        email_subject=f"Payment failed for order {payment.order.order_number}",
+        email_template="payment_status",
+        email_context={
+            "order_number": payment.order.order_number,
+            "payment_reference": payment.reference,
+            "amount": format_money(payment.amount),
+            "status_label": "Failed",
+            "status_tone": "attention",
+            "headline": "Your payment did not go through",
+            "failure_message": failure_message,
+        },
+        sms_message=f"TechHive: payment for order {payment.order.order_number} failed.",
     )
     return payment
 
@@ -110,6 +142,11 @@ def create_payment_for_order(
         )
 
     allowed_methods = {member.value for member in PaymentMethod}
+    enabled_methods = {
+        str(value).strip().lower()
+        for value in current_app.config.get("PAYMENT_ENABLED_METHODS", ())
+        if str(value).strip()
+    }
     if method not in allowed_methods:
         return (
             None,
@@ -118,6 +155,17 @@ def create_payment_for_order(
                 "Unsupported payment method.",
                 400,
                 {"method": "Unsupported payment method."},
+            ),
+            400,
+        )
+    if enabled_methods and method not in enabled_methods:
+        return (
+            None,
+            ServiceError(
+                "validation_error",
+                "This payment method is currently unavailable.",
+                400,
+                {"method": "This payment method is currently unavailable."},
             ),
             400,
         )
@@ -133,6 +181,27 @@ def create_payment_for_order(
             ),
             400,
         )
+    if method == PaymentMethod.MPESA.value:
+        try:
+            validate_mpesa_configuration(callback_base_url)
+            normalize_mpesa_phone_number(phone_number)
+        except MpesaValidationError as exc:
+            return (
+                None,
+                ServiceError(
+                    "validation_error",
+                    str(exc),
+                    400,
+                    {"phone_number": str(exc)},
+                ),
+                400,
+            )
+        except MpesaConfigurationError as exc:
+            return (
+                None,
+                ServiceError("payment_configuration_error", str(exc), 503),
+                503,
+            )
 
     order = get_user_order(user_id=user_id, order_id=order_id)
     if order is None:
@@ -165,7 +234,7 @@ def create_payment_for_order(
             reconciliation_timeout_minutes
         )
     db.session.add(payment)
-    db.session.flush()
+    db.session.commit()
 
     try:
         from app.blueprints.payments.webhooks import initiate_provider_payment
@@ -175,8 +244,21 @@ def create_payment_for_order(
             callback_base_url=callback_base_url,
             payload={"phone_number": phone_number},
         )
+    except MpesaValidationError as exc:
+        payment.status = PaymentStatus.FAILED
+        payment.failure_code = "validation_error"
+        payment.failure_message = str(exc)
+        payment.processed_at = datetime.now(timezone.utc)
+        payment.reconciliation_due_at = None
+        db.session.commit()
+        return (None, ServiceError("validation_error", str(exc), 400, {"phone_number": str(exc)}), 400)
     except MpesaConfigurationError as exc:
-        db.session.rollback()
+        payment.status = PaymentStatus.FAILED
+        payment.failure_code = "payment_configuration_error"
+        payment.failure_message = str(exc)
+        payment.processed_at = datetime.now(timezone.utc)
+        payment.reconciliation_due_at = None
+        db.session.commit()
         return (
             None,
             ServiceError("payment_configuration_error", str(exc), 503),
@@ -214,10 +296,22 @@ def create_payment_for_order(
     payment.payer_phone_number = provider_payload.get("phone_number")
     payment.redirect_url = provider_payload.get("redirect_url")
     payment.provider_response = dump_provider_response(provider_payload)
-    create_notification(
-        user_id,
-        NotificationType.PAYMENT_CREATED,
-        "Payment created",
-        f"Payment {payment.reference} has been created for order {order.order_number}.",
+    db.session.commit()
+    dispatch_user_notification(
+        user=order.user,
+        notification_type=NotificationType.PAYMENT_CREATED,
+        title="Payment created",
+        message=f"Payment {payment.reference} has been created for order {order.order_number}.",
+        email_subject=f"Payment started for order {order.order_number}",
+        email_template="payment_status",
+        email_context={
+            "order_number": order.order_number,
+            "payment_reference": payment.reference,
+            "amount": format_money(payment.amount),
+            "status_label": "Pending",
+            "status_tone": "info",
+            "headline": "Your payment request is ready",
+        },
+        sms_message=f"TechHive: payment request for order {order.order_number} has been created.",
     )
     return payment, None, 201

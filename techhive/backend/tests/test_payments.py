@@ -320,8 +320,28 @@ def test_mpesa_payment_rejects_invalid_phone_number(client):
         headers=headers,
     )
 
-    assert response.status_code == 503
-    assert response.get_json()["error"]["code"] == "payment_configuration_error"
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "validation_error"
+    assert response.get_json()["error"]["details"]["phone_number"] == (
+        "Phone number must be a valid Kenyan MSISDN."
+    )
+
+
+def test_create_payment_rejects_disabled_payment_method(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+    client.application.config["PAYMENT_ENABLED_METHODS"] = ("mpesa",)
+
+    response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "manual"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["method"] == (
+        "This payment method is currently unavailable."
+    )
 
 
 def test_mpesa_strict_mode_rejects_missing_credentials(client):
@@ -607,6 +627,45 @@ def test_mpesa_callback_duplicate_event_is_idempotent(client):
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.get_json()["result"] in {"duplicate", "already_processed"}
+
+
+def test_mpesa_callback_processes_when_event_id_matches_initiation_request(client):
+    headers = auth_headers(client)
+    order = create_order_for_payment(client, headers)
+    payment_response = client.post(
+        "/api/v1/payments",
+        json={"order_id": order["id"], "method": "mpesa", "phone_number": "+254755000111"},
+        headers=headers,
+    )
+    payment = payment_response.get_json()["item"]
+    payload = {
+        "Body": {
+            "stkCallback": {
+                "MerchantRequestID": payment["provider_event_id"],
+                "CheckoutRequestID": payment["external_reference"],
+                "ResultCode": 0,
+                "ResultDesc": "The service request is processed successfully.",
+                "CallbackMetadata": {
+                    "Item": [
+                        {"Name": "Amount", "Value": 18500},
+                        {"Name": "MpesaReceiptNumber", "Value": "NLJ7RT61SB"},
+                        {"Name": "PhoneNumber", "Value": 254755000111},
+                    ]
+                },
+            }
+        }
+    }
+    import json
+
+    response = client.post(
+        "/api/v1/payments/webhooks/mpesa",
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["item"]["status"] == "paid"
+    assert response.get_json()["result"] == "updated"
 
 
 def test_mpesa_failed_callback_persists_failure_classification(client):

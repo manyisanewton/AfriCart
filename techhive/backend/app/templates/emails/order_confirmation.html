@@ -1,0 +1,14 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Your order is confirmed" %}
+{% set preheader = preheader or "We have received your order and the team is preparing it now." %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>Thank you for shopping with {{ app_name }}. Your order has been received successfully and is now in our queue for processing.</p>
+<div class="panel">
+  <strong>Order number</strong>
+  <p style="margin: 0 0 12px; font-size: 22px; font-weight: 700;">{{ order_number }}</p>
+  <strong>Total amount</strong>
+  <p style="margin: 0; font-size: 22px; font-weight: 700;">KES {{ total_amount }}</p>
+</div>
+<p>We’ll keep you updated with any payment, delivery, or status changes along the way.</p>
+{% endblock %}

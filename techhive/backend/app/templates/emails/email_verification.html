@@ -1,0 +1,12 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Verify your email" %}
+{% set preheader = preheader or "Confirm your email address to keep your account trusted." %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>Use the verification token below to confirm that {{ email }} belongs to you.</p>
+<div class="panel">
+  <strong>Email verification token</strong>
+  <p style="font-size: 24px; font-weight: 700; margin: 0;">{{ verification_token }}</p>
+</div>
+<p>Once verified, you’ll be ready for secure checkout updates and account recovery.</p>
+{% endblock %}

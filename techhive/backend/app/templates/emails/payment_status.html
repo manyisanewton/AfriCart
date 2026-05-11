@@ -1,0 +1,23 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Payment update" %}
+{% set preheader = preheader or message %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>{{ message }}</p>
+<div class="panel">
+  <strong>Order number</strong>
+  <p style="margin: 0 0 10px; font-size: 22px; font-weight: 700;">{{ order_number }}</p>
+  {% if payment_reference %}
+  <strong>Payment reference</strong>
+  <p style="margin: 0 0 10px;">{{ payment_reference }}</p>
+  {% endif %}
+  {% if amount %}
+  <strong>Amount</strong>
+  <p style="margin: 0 0 16px;">KES {{ amount }}</p>
+  {% endif %}
+  <span class="status-pill {{ status_tone or 'info' }}">{{ status_label }}</span>
+  {% if failure_message %}
+  <p style="margin: 16px 0 0;">{{ failure_message }}</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -9,15 +9,25 @@ from app.models.delivery_agent import DeliveryAgent
 from app.models.delivery_zone import DeliveryZone
 from app.models.flash_sale import FlashSale
 from app.models.notification import Notification, NotificationType
+from app.models.notification_delivery import (
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationDeliveryStatus,
+)
+from app.models.notification_preference import NotificationPreference
 from app.models.order import Order, OrderStatus
 from app.models.order_item import OrderItem
 from app.models.payment import Payment, PaymentMethod, PaymentStatus
+from app.models.platform_setting import PlatformSetting
 from app.models.product import Product
 from app.models.product_image import ProductImage
+from app.models.product_view import ProductView
 from app.models.product_variant import ProductVariant
 from app.models.promo_code import PromoCode, PromoCodeType
 from app.models.refund import Refund, RefundStatus
+from app.models.recommendation_event import RecommendationEvent
 from app.models.review import Review
+from app.models.support_ticket import SupportTicket, SupportTicketStatus
 from app.models.user import User, UserRole
 from app.models.vendor import Vendor, VendorStatus
 from app.models.vendor_kyc import VendorKYCStatus, VendorKYCSubmission
@@ -36,6 +46,10 @@ __all__ = [
     "DeliveryZone",
     "FlashSale",
     "Notification",
+    "NotificationChannel",
+    "NotificationDelivery",
+    "NotificationDeliveryStatus",
+    "NotificationPreference",
     "NotificationType",
     "Order",
     "OrderItem",
@@ -43,14 +57,19 @@ __all__ = [
     "Payment",
     "PaymentMethod",
     "PaymentStatus",
+    "PlatformSetting",
     "Product",
     "ProductImage",
+    "ProductView",
     "ProductVariant",
     "PromoCode",
     "PromoCodeType",
     "Refund",
     "RefundStatus",
+    "RecommendationEvent",
     "Review",
+    "SupportTicket",
+    "SupportTicketStatus",
     "User",
     "UserRole",
     "Vendor",

@@ -1,0 +1,23 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Refund update" %}
+{% set preheader = preheader or "There is an update on your refund request." %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>We have an update for your refund request.</p>
+<div class="panel">
+  <strong>Order number</strong>
+  <p style="margin: 0 0 10px; font-size: 22px; font-weight: 700;">{{ order_number }}</p>
+  {% if refund_amount %}
+  <strong>Refund amount</strong>
+  <p style="margin: 0 0 10px;">KES {{ refund_amount }}</p>
+  {% endif %}
+  <span class="status-pill {{ status_tone or 'info' }}">{{ status_label }}</span>
+  {% if reason_text %}
+  <p style="margin: 16px 0 0;"><strong>Reason:</strong> {{ reason_text }}</p>
+  {% endif %}
+  {% if admin_note %}
+  <p style="margin: 12px 0 0;"><strong>Admin note:</strong> {{ admin_note }}</p>
+  {% endif %}
+</div>
+<p>If you need more help, reply to this email and our team will guide you.</p>
+{% endblock %}

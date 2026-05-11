@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from app.blueprints.delivery.tracking import generate_tracking_token, resolve_delivery_zone
-from app.blueprints.notifications.push import create_notification
 from app.blueprints.orders.helpers import generate_order_number
 from app.blueprints.promotions.helpers import validate_promo_code_for_amount
 from app.services.commerce_state_service import transition_order
@@ -21,6 +20,9 @@ from app.models import (
     Refund,
     RefundStatus,
 )
+from app.services.notification_dispatch_service import dispatch_user_notification
+from app.services.major_notification_service import notify_refund_requested
+from app.utils.helpers import format_money
 
 
 @dataclass
@@ -114,11 +116,20 @@ def create_order_from_cart(
         product.stock_quantity -= cart_item.quantity
         db.session.delete(cart_item)
 
-    create_notification(
-        user_id,
-        NotificationType.ORDER_CREATED,
-        "Order placed",
-        f"Your order {order.order_number} has been created successfully.",
+    dispatch_user_notification(
+        user=address.user,
+        notification_type=NotificationType.ORDER_CREATED,
+        title="Order placed",
+        message=f"Your order {order.order_number} has been created successfully.",
+        email_subject=f"Order {order.order_number} confirmed",
+        email_template="order_confirmation",
+        email_context={
+            "order_number": order.order_number,
+            "total_amount": format_money(order.total_amount),
+            "headline": "Your order is confirmed",
+            "preheader": f"Order {order.order_number} has been received and is being prepared.",
+        },
+        sms_message=f"TechHive: order {order.order_number} was placed successfully.",
     )
     return order, None
 
@@ -140,11 +151,20 @@ def cancel_order_for_user(*, user_id: int, order_id: int) -> tuple[Order | None,
     transition_error = transition_order(order, OrderStatus.CANCELLED)
     if transition_error is not None:
         return None, ServiceError({"order": transition_error.message}, status_code=400)
-    create_notification(
-        user_id,
-        NotificationType.ORDER_CANCELLED,
-        "Order cancelled",
-        f"Your order {order.order_number} has been cancelled.",
+    dispatch_user_notification(
+        user=order.user,
+        notification_type=NotificationType.ORDER_CANCELLED,
+        title="Order cancelled",
+        message=f"Your order {order.order_number} has been cancelled.",
+        email_subject=f"Order {order.order_number} cancelled",
+        email_template="order_status",
+        email_context={
+            "order_number": order.order_number,
+            "status_label": "Cancelled",
+            "status_tone": "attention",
+            "headline": "Your order was cancelled",
+        },
+        sms_message=f"TechHive: order {order.order_number} has been cancelled.",
     )
     return order, None
 
@@ -175,10 +195,5 @@ def request_refund_for_order(
         status=RefundStatus.REQUESTED,
     )
     db.session.add(refund)
-    create_notification(
-        user_id,
-        NotificationType.ORDER_CANCELLED,
-        "Refund requested",
-        f"Refund requested for order {order.order_number}.",
-    )
+    notify_refund_requested(refund)
     return refund, None

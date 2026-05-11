@@ -1,0 +1,23 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Support update" %}
+{% set preheader = preheader or "We have an update on your support request." %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>We are keeping you updated on your support request.</p>
+<div class="panel">
+  <strong>Subject</strong>
+  <p style="margin: 0 0 10px; font-size: 20px; font-weight: 700;">{{ ticket_subject }}</p>
+  <strong>Category</strong>
+  <p style="margin: 0 0 10px;">{{ ticket_category }}</p>
+  {% if ticket_status %}
+  <span class="status-pill {{ status_tone or 'info' }}">{{ ticket_status }}</span>
+  {% endif %}
+  {% if ticket_message %}
+  <p style="margin: 16px 0 0;"><strong>Your message:</strong> {{ ticket_message }}</p>
+  {% endif %}
+  {% if admin_note %}
+  <p style="margin: 12px 0 0;"><strong>Support note:</strong> {{ admin_note }}</p>
+  {% endif %}
+</div>
+<p>We will continue to keep you updated until this is resolved.</p>
+{% endblock %}

@@ -13,6 +13,7 @@ from app.extensions import db
 from app.middleware.role_required import role_required
 from app.models import UserRole, VendorKYCStatus, VendorKYCSubmission
 from app.services.audit_service import log_audit_event
+from app.services.vendor_media_service import upload_vendor_kyc_document
 
 
 def _add_vendor_kyc_audit_log(*, action: str, submission_id: int, metadata: dict | None = None) -> None:
@@ -90,3 +91,42 @@ def submit_vendor_kyc():
     )
     db.session.commit()
     return jsonify({"item": serialize_vendor_kyc_submission(submission)}), 201 if created else 200
+
+
+@vendors_bp.post("/kyc/document")
+@role_required(UserRole.VENDOR.value)
+def upload_kyc_document():
+    """
+    Upload a KYC document for the authenticated vendor.
+    ---
+    tags:
+      - Vendors
+    consumes:
+      - multipart/form-data
+    responses:
+      201:
+        description: KYC document uploaded.
+    """
+    vendor, error = _vendor_profile_or_403()
+    if error:
+        return error
+
+    stored, service_error = upload_vendor_kyc_document(
+        vendor=vendor,
+        upload=request.files.get("file"),
+    )
+    if service_error is not None:
+        return validation_error(service_error.details)
+
+    submission = vendor.kyc_submission
+    if submission is not None:
+        submission.document_url = stored["url"]
+        db.session.flush()
+
+    _add_vendor_kyc_audit_log(
+        action="vendor.kyc_document_uploaded",
+        submission_id=submission.id if submission is not None else 0,
+        metadata={"vendor_id": vendor.id, "document_url": stored["url"]},
+    )
+    db.session.commit()
+    return jsonify({"item": stored}), 201

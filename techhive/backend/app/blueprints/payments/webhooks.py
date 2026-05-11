@@ -9,6 +9,7 @@ from app.blueprints.payments.mpesa import classify_mpesa_result_code, initiate_m
 from app.blueprints.payments.paypal import create_paypal_order
 from app.blueprints.payments.stripe_gateway import create_stripe_payment_intent
 from app.models import NotificationType, OrderStatus, Payment, PaymentMethod, PaymentStatus
+from app.services.mpesa_logging_service import log_mpesa_debug, log_mpesa_error
 from app.services.payment_service import apply_failed_state, apply_paid_state
 
 
@@ -56,7 +57,17 @@ def should_accept_unsigned_mpesa_callback(payload: dict | None) -> bool:
 
 def apply_provider_webhook(provider: str, event_id: str | None, payload: dict) -> tuple[Payment | None, str]:
     normalized = normalize_provider_webhook(provider, payload, event_id)
+    if provider == PaymentMethod.MPESA.value:
+        log_mpesa_debug(
+            "Received M-Pesa callback",
+            payload={
+                "event_id": event_id,
+                "normalized": normalized,
+            },
+        )
     if normalized.get("error_code"):
+        if provider == PaymentMethod.MPESA.value:
+            log_mpesa_error("M-Pesa callback normalization failed", normalized["error_code"], payload=normalized)
         return None, normalized["error_code"]
 
     payment = None
@@ -66,9 +77,23 @@ def apply_provider_webhook(provider: str, event_id: str | None, payload: dict) -
         payment = Payment.query.filter_by(reference=normalized["reference"]).first()
 
     if payment is None or payment.method.value != provider:
+        if provider == PaymentMethod.MPESA.value:
+            log_mpesa_error(
+                "M-Pesa callback payment lookup failed",
+                "payment_not_found",
+                payload={
+                    "reference": normalized["reference"],
+                    "external_reference": normalized["external_reference"],
+                    "event_id": normalized["event_id"],
+                },
+            )
         return None, "payment_not_found"
 
-    if normalized["event_id"] and payment.provider_event_id == normalized["event_id"]:
+    if (
+        normalized["event_id"]
+        and payment.provider_event_id == normalized["event_id"]
+        and (payment.processed_at is not None or payment.status != PaymentStatus.PENDING)
+    ):
         return payment, "duplicate"
 
     if payment.status == PaymentStatus.PAID and normalized["status"] == PaymentStatus.PAID.value:
@@ -78,21 +103,45 @@ def apply_provider_webhook(provider: str, event_id: str | None, payload: dict) -
     if provider_receipt:
         existing_receipt = Payment.query.filter_by(provider_receipt=provider_receipt).first()
         if existing_receipt is not None and existing_receipt.id != payment.id:
+            if provider == PaymentMethod.MPESA.value:
+                log_mpesa_error(
+                    "M-Pesa callback rejected duplicate receipt",
+                    "duplicate_receipt",
+                    payload={"provider_receipt": provider_receipt, "payment_id": payment.id},
+                )
             return None, "duplicate_receipt"
 
     if (
         normalized["status"] == PaymentStatus.PAID.value
         and payment.order.status == OrderStatus.CANCELLED
     ):
+        if provider == PaymentMethod.MPESA.value:
+            log_mpesa_error(
+                "M-Pesa callback rejected invalid order state",
+                "invalid_order_state",
+                payload={"payment_id": payment.id, "order_status": payment.order.status.value},
+            )
         return None, "invalid_order_state"
 
     if normalized["status"] == PaymentStatus.PAID.value:
         amount = normalized.get("amount")
         if amount is None or int(float(payment.amount)) != int(float(amount)):
+            if provider == PaymentMethod.MPESA.value:
+                log_mpesa_error(
+                    "M-Pesa callback amount mismatch",
+                    "amount_mismatch",
+                    payload={"payment_id": payment.id, "expected": float(payment.amount), "received": amount},
+                )
             return None, "amount_mismatch"
 
         phone_number = normalized.get("phone_number")
         if payment.payer_phone_number and phone_number and payment.payer_phone_number != phone_number:
+            if provider == PaymentMethod.MPESA.value:
+                log_mpesa_error(
+                    "M-Pesa callback phone mismatch",
+                    "phone_mismatch",
+                    payload={"payment_id": payment.id, "expected": payment.payer_phone_number, "received": phone_number},
+                )
             return None, "phone_mismatch"
 
     if normalized["status"] == PaymentStatus.PAID.value:
@@ -115,6 +164,17 @@ def apply_provider_webhook(provider: str, event_id: str | None, payload: dict) -
 
     payment.provider_event_id = normalized["event_id"] or payment.provider_event_id
     payment.provider_response = dump_provider_response(normalized["raw"])
+    if provider == PaymentMethod.MPESA.value:
+        log_mpesa_debug(
+            "M-Pesa callback applied",
+            payload={
+                "payment_id": payment.id,
+                "reference": payment.reference,
+                "status": payment.status.value,
+                "failure_code": payment.failure_code,
+                "provider_receipt": payment.provider_receipt,
+            },
+        )
     return payment, "updated"
 
 

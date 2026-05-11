@@ -75,6 +75,19 @@ class User(db.Model):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    support_tickets = db.relationship(
+        "SupportTicket",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    notification_preference = db.relationship(
+        "NotificationPreference",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
     delivery_agent_profile = db.relationship(
         "DeliveryAgent",
         back_populates="user",

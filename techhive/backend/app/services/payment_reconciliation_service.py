@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from app.blueprints.notifications.push import create_notification
 from app.blueprints.payments.helpers import dump_provider_response
 from app.blueprints.payments.mpesa import MpesaGatewayError, query_mpesa_payment_status
 from app.models import NotificationType, Payment, PaymentMethod, PaymentStatus
+from app.services.notification_dispatch_service import dispatch_user_notification
 
 
 def build_payment_reconciliation_deadline(timeout_minutes: int) -> datetime:
@@ -61,11 +61,21 @@ def reconcile_stale_mpesa_payments(
             payment.failure_message = provider_state["failure_message"]
             payment.processed_at = now
             payment.reconciliation_due_at = None
-            create_notification(
-                payment.order.user_id,
-                NotificationType.PAYMENT_FAILED,
-                "Payment failed",
-                f"Payment {payment.reference} was marked as failed after M-Pesa status verification.",
+            dispatch_user_notification(
+                user=payment.order.user,
+                notification_type=NotificationType.PAYMENT_FAILED,
+                title="Payment failed",
+                message=f"Payment {payment.reference} was marked as failed after M-Pesa status verification.",
+                email_subject=f"Payment failed for order {payment.order.order_number}",
+                email_template="payment_status",
+                email_context={
+                    "order_number": payment.order.order_number,
+                    "payment_reference": payment.reference,
+                    "status_label": "Failed",
+                    "status_tone": "attention",
+                    "headline": "Your payment was declined during verification",
+                    "failure_message": payment.failure_message,
+                },
             )
             provider_failed.append(payment)
             continue
@@ -75,11 +85,21 @@ def reconcile_stale_mpesa_payments(
             payment.failure_message = provider_state["failure_message"]
             payment.processed_at = now
             payment.reconciliation_due_at = None
-            create_notification(
-                payment.order.user_id,
-                NotificationType.PAYMENT_FAILED,
-                "Payment requires review",
-                f"Payment {payment.reference} needs manual review after M-Pesa status verification.",
+            dispatch_user_notification(
+                user=payment.order.user,
+                notification_type=NotificationType.PAYMENT_FAILED,
+                title="Payment requires review",
+                message=f"Payment {payment.reference} needs manual review after M-Pesa status verification.",
+                email_subject=f"Payment review required for order {payment.order.order_number}",
+                email_template="payment_status",
+                email_context={
+                    "order_number": payment.order.order_number,
+                    "payment_reference": payment.reference,
+                    "status_label": "Needs review",
+                    "status_tone": "info",
+                    "headline": "Your payment needs manual review",
+                    "failure_message": payment.failure_message,
+                },
             )
             manual_review.append(payment)
             continue
@@ -100,11 +120,21 @@ def reconcile_stale_mpesa_payments(
         payment.failure_message = "M-Pesa payment timed out before callback confirmation."
         payment.processed_at = now
         payment.reconciliation_due_at = None
-        create_notification(
-            payment.order.user_id,
-            NotificationType.PAYMENT_FAILED,
-            "Payment reconciliation timeout",
-            f"Payment {payment.reference} was marked as failed after callback timeout.",
+        dispatch_user_notification(
+            user=payment.order.user,
+            notification_type=NotificationType.PAYMENT_FAILED,
+            title="Payment reconciliation timeout",
+            message=f"Payment {payment.reference} was marked as failed after callback timeout.",
+            email_subject=f"Payment timed out for order {payment.order.order_number}",
+            email_template="payment_status",
+            email_context={
+                "order_number": payment.order.order_number,
+                "payment_reference": payment.reference,
+                "status_label": "Timed out",
+                "status_tone": "attention",
+                "headline": "Your payment timed out",
+                "failure_message": payment.failure_message,
+            },
         )
         timed_out.append(payment)
 
