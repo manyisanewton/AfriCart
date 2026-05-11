@@ -72,28 +72,28 @@ const mockProducts = [{
 export const productAPI = {
     listProducts: async() => {
         const response = await api.get('/products');
-        console.log("REAL API RESPONSE:", response.data);
+        // console.log("REAL API RESPONSE:", response.data);
         return response;
     },
     listCategories: async() => {
         const response = await api.get('/categories');
-        console.log("REAL CATEGORIES:", response.data);
+        // console.log("REAL CATEGORIES:", response.data);
         return response;
     },
     getProduct: async(slug) => {
         try {
             const response = await api.get(`/products/${slug}`);
-            console.log("GET PRODUCT RESPONSE:", response.data);
+            // console.log("GET PRODUCT RESPONSE:", response.data);
             if (response.data) {
                 return response;
             }
             const product = mockProducts.find(p => p.slug === slug);
-            console.log("MOCK FALLBACK:", product);
+            // console.log("MOCK FALLBACK:", product);
             return { data: product };
         } catch (error) {
             console.log("GET PRODUCT ERROR:", error.message);
             const product = mockProducts.find(p => p.slug === slug);
-            console.log("MOCK FALLBACK:", product);
+            // console.log("MOCK FALLBACK:", product);
             return { data: product };
         }
     }
