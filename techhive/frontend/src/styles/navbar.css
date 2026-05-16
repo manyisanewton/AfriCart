@@ -250,3 +250,123 @@
         width: 100%;
     }
 }
+
+
+/* MOBILE SEARCH */
+
+.mobile-search {
+    display: none;
+    position: relative;
+    padding: 8px 16px;
+    background: #0b1b3a;
+}
+
+.mobile-search input {
+    width: 100%;
+    padding: 8px 16px 8px 36px;
+    border-radius: 50px;
+    border: none;
+    background: #fff;
+    color: #0b1b3a;
+    font-size: 0.9rem;
+}
+
+.mobile-search input::placeholder {
+    color: rgba(0, 0, 0, 0.4);
+}
+
+.mobile-search .search-icon {
+    color: #0b1b3a;
+}
+
+
+/* CATEGORIES BAR */
+
+.nav-categories {
+    background: #0b1b3a;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 2px solid #f97316;
+}
+
+.nav-categories-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.nav-categories-inner::-webkit-scrollbar {
+    display: none;
+}
+
+.nav-category-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.nav-category-pill:hover {
+    color: #f97316;
+    border-bottom: 3px solid #f97316;
+}
+
+
+/* MOBILE CATEGORIES inside hamburger menu */
+
+.mobile-categories {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 8px 0;
+}
+
+.mobile-categories-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.4);
+    padding: 4px 0 8px;
+    letter-spacing: 0.05em;
+}
+
+.mobile-category-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.8);
+    padding: 8px 0;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mobile-category-item:hover {
+    color: #f97316;
+    padding-left: 8px;
+}
+
+
+/* Show mobile search on small screens, hide desktop search */
+
+@media (max-width: 768px) {
+    .nav-search {
+        display: none;
+    }
+    .mobile-search {
+        display: block;
+    }
+}

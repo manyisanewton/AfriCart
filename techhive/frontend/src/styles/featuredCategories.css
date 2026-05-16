@@ -2,7 +2,6 @@
     width: 100%;
     background: #0b1b3a;
     border-bottom: 2px solid #f97316;
-    position: sticky;
     top: 72px;
     z-index: 90;
 }

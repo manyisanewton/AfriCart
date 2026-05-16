@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { productAPI } from "../services/api";
 import HeroBanner from "../components/home/HeroBanner";
-import FeaturedCategories from "../components/home/FeaturedCategories";
 import TrendingProducts from "../components/home/TrendingProducts";
 import "../styles/homePage.css";
 
@@ -28,7 +27,6 @@ export default function HomePage() {
   return (
     <div className="home">
       <HeroBanner />
-      <FeaturedCategories />
       <TrendingProducts />
 
     </div>
