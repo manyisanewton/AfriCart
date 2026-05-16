@@ -1,0 +1,159 @@
+/* src/styles/notFound.css */
+
+.not-found-page {
+    min-height: 70vh;
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 16px;
+}
+
+.not-found-card {
+    text-align: center;
+    max-width: 560px;
+    width: 100%;
+}
+
+.not-found-code {
+    font-size: 8rem;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1;
+    margin-bottom: 16px;
+    position: relative;
+    display: inline-block;
+}
+
+.not-found-code::after {
+    content: "";
+    display: block;
+    width: 60px;
+    height: 4px;
+    background: #f97316;
+    border-radius: 2px;
+    margin: 12px auto 0;
+}
+
+.not-found-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 12px;
+}
+
+.not-found-message {
+    font-size: 1rem;
+    color: #64748b;
+    margin-bottom: 32px;
+    line-height: 1.6;
+}
+
+.not-found-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 40px;
+}
+
+.nf-btn-primary {
+    padding: 12px 28px;
+    background: #f97316;
+    color: #fff;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: background 0.2s ease;
+}
+
+.nf-btn-primary:hover {
+    background: #ea6c0a;
+}
+
+.nf-btn-secondary {
+    padding: 12px 28px;
+    background: #0f172a;
+    color: #fff;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: background 0.2s ease;
+}
+
+.nf-btn-secondary:hover {
+    background: #1e293b;
+}
+
+.nf-btn-ghost {
+    padding: 12px 28px;
+    background: transparent;
+    border: 2px solid #0f172a;
+    color: #0f172a;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.nf-btn-ghost:hover {
+    background: #0f172a;
+    color: #fff;
+}
+
+.not-found-suggestions {
+    border-top: 1px solid #e2e8f0;
+    padding-top: 24px;
+}
+
+.not-found-suggestions p {
+    font-size: 0.85rem;
+    color: #64748b;
+    margin-bottom: 12px;
+}
+
+.nf-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+}
+
+.nf-links a {
+    padding: 6px 16px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 50px;
+    color: #0f172a;
+    font-size: 0.85rem;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.nf-links a:hover {
+    border-color: #f97316;
+    color: #f97316;
+}
+
+@media (max-width: 480px) {
+    .not-found-code {
+        font-size: 6rem;
+    }
+    .not-found-title {
+        font-size: 1.4rem;
+    }
+    .not-found-actions {
+        flex-direction: column;
+        align-items: center;
+    }
+    .nf-btn-primary,
+    .nf-btn-secondary,
+    .nf-btn-ghost {
+        width: 100%;
+        text-align: center;
+    }
+}

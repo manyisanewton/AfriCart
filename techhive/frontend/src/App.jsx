@@ -8,6 +8,7 @@ import HomePage from "./pages/HomePage";
 import ProductListingPage from "./pages/ProductListingPage";
 import ProductDetailPage from "./pages/ProductDetailPage";
 import CartPage from "./pages/CartPage";
+import NotFoundPage from "./pages/NotFoundPage";
 import CheckoutPage from "./pages/CheckoutPage";
 import OrderSuccessPage from "./pages/OrderSuccessPage";
 import AdminLayout from "./layouts/AdminLayout";
@@ -45,6 +46,7 @@ function AppContent() {
           <Route path="/cart" element={<CartPage />} />
           <Route path="/checkout" element={<CheckoutPage />} />
           <Route path="/order-success" element={<OrderSuccessPage />} />
+          <Route path="*" element={<NotFoundPage />} />
           <Route path="/account" element={<div style={{ padding: "2rem", textAlign: "center" }}>Account page coming soon</div>} />
           <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
 <Route path="/admin" element={<AdminLayout />}>
