@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { ShoppingCart, User, Search, Menu, X, Cpu, Heart } from "lucide-react";
+import { ShoppingCart, User, Search, Menu, X, Heart } from "lucide-react";
+import FeaturedCategories from "../home/FeaturedCategories";
 import "../../styles/navbar.css";
 
 export default function Navbar({ cart = [] }) {
@@ -25,8 +26,7 @@ export default function Navbar({ cart = [] }) {
           </button>
 
           <Link to="/" className="logo">
-            <Cpu size={28} className="logo-icon" />
-            <span>TechHive</span>
+            <img src="/logo.png" alt="TechHive" className="logo-image" />
           </Link>
         </div>
 
@@ -58,6 +58,10 @@ export default function Navbar({ cart = [] }) {
           </Link>
         </div>
 
+      </div>
+
+      <div className="nav-categories-shell">
+        <FeaturedCategories />
       </div>
 
       {/* MOBILE MENU */}

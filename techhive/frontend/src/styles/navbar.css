@@ -12,7 +12,7 @@
 .nav-inner {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 1rem 2rem;
+    padding: 1rem 2rem 0.9rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -46,11 +46,8 @@
 .logo {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
     text-decoration: none;
     color: white;
-    font-size: 1.5rem;
-    font-weight: 700;
     transition: transform 0.2s ease;
 }
 
@@ -58,15 +55,15 @@
     transform: scale(1.02);
 }
 
-.logo-icon {
-    color: #f97316;
+.logo-image {
+    display: block;
+    height: 56px;
+    width: auto;
+    object-fit: contain;
 }
 
-.logo span {
-    background: linear-gradient(135deg, #fff 0%, #f97316 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+.nav-categories-shell {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 
@@ -209,8 +206,8 @@
     .nav-right {
         gap: 1rem;
     }
-    .logo span {
-        font-size: 1.2rem;
+    .logo-image {
+        height: 44px;
     }
     .mobile-menu {
         display: flex;

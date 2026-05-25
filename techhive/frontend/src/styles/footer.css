@@ -26,6 +26,19 @@
     /* orange */
 }
 
+.footer-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.footer-logo {
+    display: block;
+    width: min(220px, 100%);
+    height: auto;
+    object-fit: contain;
+}
+
 
 /* ===== TEXT ===== */
 

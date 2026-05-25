@@ -5,8 +5,8 @@ export default function Footer() {
       <div className="footer-container">
 
         {/* TechHive */}
-        <div>
-          <h3 className="font-bold mb-3">TechHive</h3>
+        <div className="footer-brand">
+          <img src="/logo.png" alt="TechHive" className="footer-logo" />
           <p>Your trusted electronics marketplace.</p>
         </div>
 

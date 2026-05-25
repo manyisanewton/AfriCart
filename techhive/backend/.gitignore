@@ -1,12 +1,1 @@
-.env
 .env.*
-.venv/
-techhive.db
-*.db
-*.sqlite3
-.pytest_cache/
-__pycache__/
-media/
-.test_media/
-.env
-.env
