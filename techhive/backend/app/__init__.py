@@ -26,6 +26,7 @@ from app.services.error_monitoring_service import (
     initialize_error_monitoring,
     register_request_context,
 )
+from app.services.bootstrap_admin_service import ensure_bootstrap_admin
 from app.services.payment_metrics_service import render_payment_metrics_lines
 from app.services.runtime_config_service import (
     get_runtime_config_report,
@@ -47,6 +48,9 @@ def create_app(config_name: str | None = None) -> Flask:
     initialize_error_monitoring(app)
     register_routes(app)
     register_error_handlers(app)
+
+    with app.app_context():
+        ensure_bootstrap_admin()
 
     return app
 

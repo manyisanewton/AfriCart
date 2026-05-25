@@ -6,14 +6,16 @@ import type { ProductImageItem } from "~/types/ProductImage";
 const pageTitle = computed(() => "New Product");
 const { createProduct, getBrandOptions, getCategoryOptions, getVendorOptions, syncProductImages } = useProduct();
 const isSaving = ref(false)
+const submitError = ref("")
 
 function discardChanges() {
   navigateTo("/products");
 }
-async function submit(event: FormSubmitEvent<ProductFormSchema>) {
+async function handleSubmit(event: FormSubmitEvent<ProductFormSchema>) {
   if (isSaving.value)
     return
 
+  submitError.value = ""
   isSaving.value = true
   const toast = useToast();
   const result = await createProduct(event.data);
@@ -34,9 +36,10 @@ async function submit(event: FormSubmitEvent<ProductFormSchema>) {
     toast.add({ title: "Product created", description: "The product is now saved.", color: "success" });
     await navigateTo("/products");
   } else {
+    submitError.value = result.error || "Could not create product."
     toast.add({
       title: "Create failed",
-      description: result.error || "Could not create product.",
+      description: submitError.value,
       color: "error",
     });
   }
@@ -80,8 +83,8 @@ const images = ref<ProductImageItem[]>([]);
 
 <template>
   <div class="w-full">
-    <ProductForm :status-options="statusOptions" :categories="categories" :brands="brands" :vendors="vendors" @on-submit="submit">
-      <template #header="{ submit }">
+    <ProductForm :status-options="statusOptions" :categories="categories" :brands="brands" :vendors="vendors" :submit-error="submitError" @on-submit="handleSubmit">
+      <template #header="{ submit: submitForm }">
         <div class="mx-auto max-w-screen-xl py-4">
           <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div class="flex items-center gap-3">
@@ -105,7 +108,7 @@ const images = ref<ProductImageItem[]>([]);
                 variant="outline"
                 @click="discardChanges"
               />
-              <UButton color="primary" variant="solid" :loading="isSaving" @click="submit">
+              <UButton color="primary" variant="solid" :loading="isSaving" @click="submitForm">
                 Save
                 <UIcon name="i-lucide-save" />
               </UButton>

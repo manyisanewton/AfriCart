@@ -8,6 +8,7 @@ const props = defineProps<{
   categories: { label: string; value: string }[];
   brands?: { label: string; value: string }[];
   vendors?: { label: string; value: string }[];
+  submitError?: string;
 }>();
 
 const emit = defineEmits<{
@@ -66,11 +67,14 @@ const productSchema = z.object({
     })
     .default("draft"),
   category: z
-    .string()
-    .optional()
-    .default(""),
-  vendor: z.string().optional().default(""),
-  brand: z.string().optional(),
+    .string({ error: "Category is required" })
+    .min(1, "Category is required"),
+  vendor: z
+    .string({ error: "Vendor is required" })
+    .min(1, "Vendor is required"),
+  brand: z
+    .string({ error: "Brand is required" })
+    .min(1, "Brand is required"),
   tags: z.string().optional(),
 });
 
@@ -96,6 +100,8 @@ const localFormState = reactive<ProductFormSchema>({
   tags: "",
   ...props.values,
 }) as ProductFormSchema;
+
+const validationSummary = ref("");
 
 watch(
   () => props.values,
@@ -133,6 +139,7 @@ function generateSKU() {
 }
 
 function emitSubmit(data: ProductFormSchema) {
+  validationSummary.value = "";
   emit("onSubmit", {
     data: { ...data },
   } as FormSubmitEvent<ProductFormSchema>);
@@ -141,7 +148,10 @@ function emitSubmit(data: ProductFormSchema) {
 function submitForm() {
   const result = productSchema.safeParse(localFormState);
   if (!result.success) {
-    // handle errors, e.g. show a toast or set error state
+    validationSummary.value = result.error.issues
+      .map(issue => issue.message)
+      .filter(Boolean)
+      .join(" ");
     return;
   }
   emitSubmit(result.data);
@@ -166,6 +176,12 @@ function onSubmit(e: FormSubmitEvent<ProductFormSchema>) {
                   Product Information
                 </h3>
               </template>
+              <div v-if="validationSummary" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                {{ validationSummary }}
+              </div>
+              <div v-if="submitError" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                {{ submitError }}
+              </div>
               <div class="space-y-4">
                 <UFormField label="Product Name" name="name" required>
                   <UInput
@@ -193,7 +209,7 @@ function onSubmit(e: FormSubmitEvent<ProductFormSchema>) {
                 </h3>
               </template>
               <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <UFormField label="Vendor" name="vendor">
+                <UFormField label="Vendor" name="vendor" required>
                   <USelect
                     v-model="localFormState.vendor"
                     :items="vendors || []"
@@ -204,7 +220,7 @@ function onSubmit(e: FormSubmitEvent<ProductFormSchema>) {
                     placeholder="Select vendor"
                   />
                 </UFormField>
-                <UFormField label="Category" name="category">
+                <UFormField label="Category" name="category" required>
                   <USelect
                     v-model="localFormState.category"
                     :items="categories"
@@ -212,9 +228,10 @@ function onSubmit(e: FormSubmitEvent<ProductFormSchema>) {
                     option-attribute="label"
                     size="lg"
                     class="w-full"
+                    placeholder="Select category"
                   />
                 </UFormField>
-                <UFormField label="Brand" name="brand">
+                <UFormField label="Brand" name="brand" required>
                   <USelect
                     v-model="localFormState.brand"
                     :items="brands || []"
@@ -222,6 +239,7 @@ function onSubmit(e: FormSubmitEvent<ProductFormSchema>) {
                     option-attribute="label"
                     size="lg"
                     class="w-full"
+                    placeholder="Select brand"
                   />
                 </UFormField>
                 <UFormField label="Tags" name="tags" class="sm:col-span-2">

@@ -53,7 +53,7 @@ export interface ProductListParams {
 
 function readApiError(err: any) {
   const detail = err?.data?.error?.message || err?.data?.detail || err?.message
-  const errors = err?.data?.error?.errors || err?.data
+  const errors = err?.data?.error?.details || err?.data?.error?.errors || err?.data
 
   if (errors && typeof errors === 'object' && !Array.isArray(errors)) {
     return Object.entries(errors)

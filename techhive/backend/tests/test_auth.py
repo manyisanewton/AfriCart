@@ -1,7 +1,8 @@
 from app.extensions import db
 from app.models import User
+from app.services.bootstrap_admin_service import ensure_bootstrap_admin
 from tests.factories import create_existing_user
-from app.utils.security import create_email_verification_token, create_password_reset_token
+from app.utils.security import create_email_verification_token, create_password_reset_token, verify_password
 
 
 def test_register_creates_user_and_returns_tokens(client):
@@ -95,6 +96,25 @@ def test_me_returns_authenticated_user(client):
 
     assert response.status_code == 200
     assert response.get_json()["user"]["email"] == "authuser@example.com"
+
+
+def test_bootstrap_admin_can_be_seeded_from_env(client, app, monkeypatch):
+    monkeypatch.setitem(app.config, "BOOTSTRAP_ADMIN_ENABLED", True)
+    monkeypatch.setitem(app.config, "BOOTSTRAP_ADMIN_EMAIL", "global-admin@example.com")
+    monkeypatch.setitem(app.config, "BOOTSTRAP_ADMIN_PASSWORD", "GlobalAdmin123!")
+    monkeypatch.setitem(app.config, "BOOTSTRAP_ADMIN_FIRST_NAME", "Global")
+    monkeypatch.setitem(app.config, "BOOTSTRAP_ADMIN_LAST_NAME", "Admin")
+    monkeypatch.setitem(app.config, "BOOTSTRAP_ADMIN_EMAIL_VERIFIED", True)
+
+    with app.app_context():
+        ensure_bootstrap_admin()
+        user = User.query.filter_by(email="global-admin@example.com").first()
+        assert user is not None
+        assert user.role.value == "admin"
+        assert user.is_active is True
+        assert user.email_verified is True
+        assert user.must_change_password is False
+        assert verify_password(user.password_hash, "GlobalAdmin123!")
 
 
 def test_update_me_updates_profile_fields(client):
