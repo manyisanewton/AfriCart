@@ -28,6 +28,7 @@ def user_to_dict(user: User) -> dict:
         "role": user.role.value,
         "is_active": user.is_active,
         "email_verified": user.email_verified,
+        "must_change_password": user.must_change_password,
         "created_at": user.created_at.isoformat(),
     }
 

@@ -75,7 +75,7 @@ def vendor_summary(vendor_id: int):
     products = Product.query.filter_by(vendor_id=vendor_id).all()
     product_ids = [product.id for product in products]
     product_count = len(products)
-    low_stock_count = sum(1 for product in products if product.stock_quantity <= 5)
+    low_stock_count = sum(1 for product in products if product.stock_quantity <= product.low_stock_threshold)
 
     if not product_ids:
         return {

@@ -72,6 +72,7 @@ export interface OfferMetadata {
 
 function readApiError(err: any) {
   return err?.data?.error?.detail
+    || err?.data?.error?.message
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
@@ -87,7 +88,7 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<OfferMetadata>('/admin/offers/meta/', { method: 'GET' })
+      const result = await request<OfferMetadata>('/admin/offers/meta', { method: 'GET' })
       return { success: true, data: result }
     }
     catch (err: any) {
@@ -104,14 +105,20 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ results: OfferItem[], pagination: any }>('/admin/offers/', {
+      const result = await request<{ items: OfferItem[] }>('/admin/offers', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: result.items?.length || 0,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -127,11 +134,11 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ offer: OfferItem }>('/admin/offers/', {
+      const result = await request<{ item: OfferItem }>('/admin/offers', {
         method: 'POST',
         body: payload,
       })
-      return { success: true, data: result.offer }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -147,11 +154,11 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ offer: OfferItem }>(`/admin/offers/${id}/`, {
+      const result = await request<{ item: OfferItem }>(`/admin/offers/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.offer }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -167,11 +174,11 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ offer: OfferItem }>(`/admin/offers/${id}/status/`, {
+      const result = await request<{ item: OfferItem }>(`/admin/offers/${id}/status`, {
         method: 'PATCH',
         body: { status },
       })
-      return { success: true, data: result.offer }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -187,7 +194,7 @@ export function useOffers() {
     error.value = null
 
     try {
-      await request(`/admin/offers/${id}/`, { method: 'DELETE' })
+      await request(`/admin/offers/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {
@@ -204,14 +211,20 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ results: OfferConditionItem[], pagination: any }>('/admin/offers/conditions/', {
+      const result = await request<{ items: OfferConditionItem[] }>('/admin/offers/conditions', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: result.items?.length || 0,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -227,11 +240,11 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ condition: OfferConditionItem }>('/admin/offers/conditions/', {
+      const result = await request<{ item: OfferConditionItem }>('/admin/offers/conditions', {
         method: 'POST',
         body: payload,
       })
-      return { success: true, data: result.condition }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -247,11 +260,11 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ condition: OfferConditionItem }>(`/admin/offers/conditions/${id}/`, {
+      const result = await request<{ item: OfferConditionItem }>(`/admin/offers/conditions/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.condition }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -267,7 +280,7 @@ export function useOffers() {
     error.value = null
 
     try {
-      await request(`/admin/offers/conditions/${id}/`, { method: 'DELETE' })
+      await request(`/admin/offers/conditions/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {
@@ -284,14 +297,20 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ results: OfferBenefitItem[], pagination: any }>('/admin/offers/benefits/', {
+      const result = await request<{ items: OfferBenefitItem[] }>('/admin/offers/benefits', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: result.items?.length || 0,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -307,11 +326,11 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ benefit: OfferBenefitItem }>('/admin/offers/benefits/', {
+      const result = await request<{ item: OfferBenefitItem }>('/admin/offers/benefits', {
         method: 'POST',
         body: payload,
       })
-      return { success: true, data: result.benefit }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -327,11 +346,11 @@ export function useOffers() {
     error.value = null
 
     try {
-      const result = await request<{ benefit: OfferBenefitItem }>(`/admin/offers/benefits/${id}/`, {
+      const result = await request<{ item: OfferBenefitItem }>(`/admin/offers/benefits/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.benefit }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -347,7 +366,7 @@ export function useOffers() {
     error.value = null
 
     try {
-      await request(`/admin/offers/benefits/${id}/`, { method: 'DELETE' })
+      await request(`/admin/offers/benefits/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {

@@ -30,6 +30,10 @@ async function submit() {
       description: 'Dashboard session is ready.',
       color: 'success',
     })
+    if (auth.requiresPasswordChange.value) {
+      await navigateTo('/change-password-required')
+      return
+    }
     await navigateTo(auth.homeRoute.value)
     return
   }

@@ -379,9 +379,9 @@ onMounted(loadRanges)
         </div>
 
         <div v-else class="p-4">
-          <div v-if="selectedRange.includes_all_products" class="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
-            This range includes every product. Manual product assignment is optional and may not change storefront matching.
-          </div>
+            <div v-if="selectedRange.includes_all_products" class="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
+              This range includes every product. Manual product assignment is optional and may not change storefront matching.
+            </div>
 
           <div class="mb-4 grid grid-cols-1 gap-2">
             <UInput v-model="productSearch" color="neutral" variant="outline" icon="i-lucide-search" placeholder="Search products to add..." />
@@ -401,9 +401,14 @@ onMounted(loadRanges)
                 <p class="truncate font-semibold text-slate-950">{{ product.title }}</p>
                 <p class="truncate text-xs text-slate-500">#{{ product.id }} / {{ product.upc || 'No UPC' }}</p>
               </div>
-              <UTooltip text="Remove product">
-                <UButton icon="i-lucide-x" color="error" variant="ghost" square @click="pendingRemoveProduct = product" />
-              </UTooltip>
+              <template v-if="!selectedRange.includes_all_products">
+                <UTooltip text="Remove product">
+                  <UButton icon="i-lucide-x" color="error" variant="ghost" square @click="pendingRemoveProduct = product" />
+                </UTooltip>
+              </template>
+              <UBadge v-else color="info" variant="soft">
+                Included by scope
+              </UBadge>
             </div>
           </div>
         </div>

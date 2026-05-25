@@ -14,10 +14,26 @@ export interface ProductTypePayload {
 }
 
 function readApiError(err: any) {
+  const details = err?.data?.error?.details
+  if (details && typeof details === 'object') {
+    return Object.entries(details)
+      .map(([field, message]) => `${field}: ${Array.isArray(message) ? message.join(' ') : String(message)}`)
+      .join(' ')
+  }
+
   return err?.data?.error?.detail
+    || err?.data?.error?.message
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
+}
+
+function slugify(value: string) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
 export function useProductTypes() {
@@ -30,14 +46,21 @@ export function useProductTypes() {
     error.value = null
 
     try {
-      const result = await request<{ results: ProductTypeItem[], pagination: any }>('/admin/catalog/product-types/', {
+      const result = await request<{ items: ProductTypeItem[] }>('/admin/product-types', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 100,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 100,
+            total: (result.items || []).length,
+            num_pages: 1,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -53,11 +76,14 @@ export function useProductTypes() {
     error.value = null
 
     try {
-      const result = await request<{ product_type: ProductTypeItem }>('/admin/catalog/product-types/', {
+      const result = await request<{ item: ProductTypeItem }>('/admin/product-types', {
         method: 'POST',
-        body: payload,
+        body: {
+          ...payload,
+          slug: payload.slug?.trim() || slugify(payload.name),
+        },
       })
-      return { success: true, data: result.product_type }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -73,11 +99,16 @@ export function useProductTypes() {
     error.value = null
 
     try {
-      const result = await request<{ product_type: ProductTypeItem }>(`/admin/catalog/product-types/${id}/`, {
+      const result = await request<{ item: ProductTypeItem }>(`/admin/product-types/${id}`, {
         method: 'PATCH',
-        body: payload,
+        body: {
+          ...payload,
+          ...(payload.slug !== undefined || payload.name !== undefined
+            ? { slug: payload.slug?.trim() || slugify(payload.name || '') }
+            : {}),
+        },
       })
-      return { success: true, data: result.product_type }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -93,7 +124,7 @@ export function useProductTypes() {
     error.value = null
 
     try {
-      await request(`/admin/catalog/product-types/${id}/`, {
+      await request(`/admin/product-types/${id}`, {
         method: 'DELETE',
       })
       return { success: true }

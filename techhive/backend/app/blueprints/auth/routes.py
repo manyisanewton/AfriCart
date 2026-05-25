@@ -192,6 +192,7 @@ def change_password():
         return auth_error("Current password is incorrect.", 400)
 
     g.current_user.password_hash = hash_password(payload["new_password"])
+    g.current_user.must_change_password = False
     db.session.commit()
     return {"message": "Password changed successfully."}
 

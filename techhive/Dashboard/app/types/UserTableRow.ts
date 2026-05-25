@@ -9,5 +9,6 @@ export interface UserTableRow {
   emailVerified?: boolean;
   roleValue?: string;
   isActive?: boolean;
+  detail?: Record<string, any>;
   raw?: Record<string, any>;
 }

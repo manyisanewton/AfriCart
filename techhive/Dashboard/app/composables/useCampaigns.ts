@@ -15,14 +15,14 @@ export function useCampaigns() {
     error.value = null
 
     try {
-      const result = await request<CampaignSummary>('/admin/campaigns/', {
+      const result = await request<CampaignSummary>('/admin/campaigns', {
         method: 'GET',
         query: { days },
       })
       return { success: true, data: result }
     }
     catch (err: any) {
-      error.value = err?.data?.error?.detail || err?.message || 'Unknown error'
+      error.value = err?.data?.error?.detail || err?.data?.error?.message || err?.message || 'Unknown error'
       return { success: false, error: error.value }
     }
     finally {

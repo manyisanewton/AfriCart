@@ -4,13 +4,11 @@ import { useSortableHeader } from "~/composables/useSortableHeader";
 import type { SortBy, SortDir } from "~/types/Table";
 
 export function getProductTableColumns({
-  onDelete,
   onEdit,
   sortBy,
   sortDir,
   components,
 }: {
-  onDelete: (product: ProductTableRow, event?: Event) => void;
   onEdit: (product: ProductTableRow, event?: Event) => void;
   sortBy: Ref<SortBy>;
   sortDir: Ref<SortDir>;
@@ -120,17 +118,6 @@ export function getProductTableColumns({
             onClick: (event: Event) => {
               event.stopPropagation();
               onEdit(row.original, event);
-            },
-          }),
-          h(UButton as Component, {
-            icon: "i-lucide-trash-2",
-            color: "error",
-            variant: "ghost",
-            size: "xs",
-            "aria-label": `Delete ${row.original.name}`,
-            onClick: (event: Event) => {
-              event.stopPropagation();
-              onDelete(row.original, event);
             },
           }),
         ]),

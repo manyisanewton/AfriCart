@@ -1,8 +1,6 @@
 import { Link } from "react-router-dom";
 import "../../styles/productGrid.css";
 
-const FALLBACK_IMAGE = "https://placehold.co/400x400?text=No+Image";
-
 export default function ProductGrid({ products, onAddToCart }) {
   if (!products || !products.length) {
     return <p className="empty">No products found</p>;
@@ -14,7 +12,7 @@ export default function ProductGrid({ products, onAddToCart }) {
         <div key={p.id} className="product-card">
           <div className="product-image-wrap">
             <img
-              src={p.primary_image || FALLBACK_IMAGE}
+              src={p.primary_image}
               alt={p.name}
             />
             {p.stock_quantity === 0 && (

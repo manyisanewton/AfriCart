@@ -1,0 +1,8 @@
+Hello{% if user_name %} {{ user_name }}{% endif %},
+
+Your TechHive account has been created{% if role %} for the {{ role }} role{% endif %}.
+
+Sign-in email: {{ email }}
+Temporary password: {{ temporary_password }}
+
+For security, you will be required to change this password immediately after your first login.

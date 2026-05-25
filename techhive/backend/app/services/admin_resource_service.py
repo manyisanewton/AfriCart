@@ -30,6 +30,21 @@ def update_category(*, category_id: int, payload: dict) -> tuple[Category | None
         if duplicate is not None:
             return None, ServiceError({"slug": "A category with that slug already exists."})
 
+    if "parent_id" in payload["provided_fields"]:
+        parent_id = payload.get("parent_id")
+        if parent_id is None:
+            category.parent_id = None
+        else:
+            parent = db.session.get(Category, parent_id)
+            if parent is None:
+                return None, ServiceError({"parent_id": "Parent category not found."})
+            current = parent
+            while current is not None:
+                if current.id == category.id:
+                    return None, ServiceError({"parent_id": "A category cannot be assigned to itself or one of its descendants."})
+                current = current.parent
+            category.parent_id = parent.id
+
     for field in ("name", "slug", "description", "is_active"):
         if field in payload["provided_fields"]:
             setattr(category, field, payload[field])
@@ -40,6 +55,8 @@ def delete_category(*, category_id: int) -> tuple[Category | None, ServiceError 
     category = db.session.get(Category, category_id)
     if category is None:
         return None, ServiceError({"category": "Category not found."}, status_code=404)
+    if category.children:
+        return None, ServiceError({"category": "Categories with child categories cannot be deleted."})
     if Product.query.filter_by(category_id=category.id).first() is not None:
         return None, ServiceError({"category": "Categories with products cannot be deleted."})
     db.session.delete(category)

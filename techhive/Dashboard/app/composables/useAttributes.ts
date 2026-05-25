@@ -17,10 +17,26 @@ export interface AttributePayload {
 }
 
 function readApiError(err: any) {
+  const details = err?.data?.error?.details
+  if (details && typeof details === 'object') {
+    return Object.entries(details)
+      .map(([field, message]) => `${field}: ${Array.isArray(message) ? message.join(' ') : String(message)}`)
+      .join(' ')
+  }
+
   return err?.data?.error?.detail
+    || err?.data?.error?.message
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
+}
+
+function slugifyCode(value: string) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
 }
 
 export function useAttributes() {
@@ -33,14 +49,21 @@ export function useAttributes() {
     error.value = null
 
     try {
-      const result = await request<{ results: AttributeItem[], pagination: any }>('/admin/catalog/attributes/', {
+      const result = await request<{ items: AttributeItem[] }>('/admin/attributes', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: (result.items || []).length,
+            num_pages: 1,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -56,11 +79,17 @@ export function useAttributes() {
     error.value = null
 
     try {
-      const result = await request<{ attribute: AttributeItem }>('/admin/catalog/attributes/', {
+      const result = await request<{ item: AttributeItem }>('/admin/attributes', {
         method: 'POST',
-        body: payload,
+        body: {
+          product_type_id: payload.product_class_id,
+          name: payload.name,
+          code: payload.code?.trim() || slugifyCode(payload.name),
+          type: payload.type,
+          required: payload.required,
+        },
       })
-      return { success: true, data: result.attribute }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -76,11 +105,18 @@ export function useAttributes() {
     error.value = null
 
     try {
-      const result = await request<{ attribute: AttributeItem }>(`/admin/catalog/attributes/${id}/`, {
+      const result = await request<{ item: AttributeItem }>(`/admin/attributes/${id}`, {
         method: 'PATCH',
-        body: payload,
+        body: {
+          ...(payload.name !== undefined ? { name: payload.name } : {}),
+          ...(payload.code !== undefined || payload.name !== undefined
+            ? { code: payload.code?.trim() || slugifyCode(payload.name || '') }
+            : {}),
+          ...(payload.type !== undefined ? { type: payload.type } : {}),
+          ...(payload.required !== undefined ? { required: payload.required } : {}),
+        },
       })
-      return { success: true, data: result.attribute }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -96,7 +132,7 @@ export function useAttributes() {
     error.value = null
 
     try {
-      await request(`/admin/catalog/attributes/${id}/`, {
+      await request(`/admin/attributes/${id}`, {
         method: 'DELETE',
       })
       return { success: true }

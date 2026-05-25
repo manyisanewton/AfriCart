@@ -88,7 +88,7 @@ def build_vendor_analytics_report(vendor: Vendor) -> dict:
     )[:5]
 
     low_stock_products = sorted(
-        [product for product in products if product.stock_quantity <= 5],
+        [product for product in products if product.stock_quantity <= product.low_stock_threshold],
         key=lambda product: (product.stock_quantity, product.id),
     )[:5]
 

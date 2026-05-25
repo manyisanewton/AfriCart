@@ -1,0 +1,14 @@
+{% extends "emails/base.html" %}
+{% set headline = headline or "Your TechHive account is ready" %}
+{% set preheader = preheader or "Use the temporary password below and change it on first sign-in." %}
+{% block content %}
+<p>Hello{% if user_name %} {{ user_name }}{% endif %},</p>
+<p>Your TechHive account has been created{% if role %} for the {{ role }} role{% endif %}. Use the temporary password below to sign in.</p>
+<div class="panel">
+  <strong>Sign-in email</strong>
+  <p style="font-size: 18px; font-weight: 700; margin: 0 0 14px;">{{ email }}</p>
+  <strong>Temporary password</strong>
+  <p style="font-size: 24px; font-weight: 700; margin: 0;">{{ temporary_password }}</p>
+</div>
+<p>For security, you will be required to change this password immediately after your first login.</p>
+{% endblock %}

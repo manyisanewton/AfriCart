@@ -9,6 +9,11 @@ export interface ProductTableRow {
   stock: number;
   imageUrl?: string;
   updatedAt?: string;
+  vendorName?: string;
+  rating?: number | null;
+  reviewCount?: number;
+  isActive?: boolean;
+  raw?: Record<string, any>;
 }
 
 export interface ProductStockData {

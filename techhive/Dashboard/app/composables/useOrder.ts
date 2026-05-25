@@ -25,6 +25,11 @@ export interface AdminOrderItem {
   }
   notes: string | null
   created_at: string
+  delivery_agent?: {
+    id: number
+    display_name: string
+    phone_number: string
+  } | null
   items?: Array<{
     id: number
     product_id: number
@@ -38,7 +43,18 @@ export interface AdminOrderItem {
 }
 
 export interface UpdateOrderStatusPayload {
-  status: string
+  status?: string
+  delivery_status?: string
+  tracking_token?: string
+  notes?: string | null
+  delivery_agent_id?: number | null
+}
+
+export interface DeliveryAgentChoice {
+  id: number
+  display_name: string
+  phone_number: string
+  is_active: boolean
 }
 
 function readApiError(err: any) {
@@ -83,6 +99,12 @@ function mapOrderToRow(order: AdminOrderItem): OrderTableRow {
     totalAmount: Number(order.total_amount || 0),
     currency: order.currency || 'KES',
     createdAt: order.created_at,
+    trackingToken: order.tracking_token,
+    notes: order.notes || '',
+    shippingAddress: order.shipping_address,
+    refunds: order.refunds || [],
+    items: order.items || [],
+    deliveryAgent: order.delivery_agent || null,
     raw: order,
   }
 }
@@ -135,10 +157,68 @@ export function useOrder() {
     }
   }
 
+  async function getOrder(id: number | string) {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await request<{ item: AdminOrderItem }>(`/admin/orders/${id}`, {
+        method: 'GET',
+      })
+      return { success: true, data: mapOrderToRow(result.item), raw: result.item }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function updateOrder(id: number | string, payload: UpdateOrderStatusPayload) {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await request<{ item: AdminOrderItem }>(`/admin/orders/${id}`, {
+        method: 'PATCH',
+        body: payload,
+      })
+      return { success: true, data: mapOrderToRow(result.item), raw: result.item }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function getDeliveryAgents() {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await request<{ items: DeliveryAgentChoice[] }>('/admin/delivery-agents', {
+        method: 'GET',
+      })
+      return { success: true, data: result.items || [] }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
   return {
     error,
+    getDeliveryAgents,
+    getOrder,
     getOrders,
     loading,
+    updateOrder,
     updateOrderStatus,
   }
 }

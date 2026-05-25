@@ -1,5 +1,5 @@
 from app.extensions import db
-from app.models import Address, Brand, Category, Product, User, UserRole, Vendor, VendorStatus
+from app.models import Address, Brand, Category, Product, Review, User, UserRole, Vendor, VendorStatus
 from app.utils.security import hash_password
 
 
@@ -107,6 +107,9 @@ def test_verified_buyer_can_create_review(client):
 
     assert response.status_code == 201
     assert response.get_json()["item"]["rating"] == 5
+    review = Review.query.get(response.get_json()["item"]["id"])
+    assert review is not None
+    assert review.status == Review.STATUS_MODERATION
 
 
 def test_user_cannot_review_without_purchase(client):
@@ -162,6 +165,28 @@ def test_product_review_listing_returns_summary(client):
         json={"product_id": product.id, "rating": 5, "comment": "Excellent."},
         headers=headers,
     )
+
+    response = client.get(f"/api/v1/products/{product.slug}/reviews")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["summary"]["review_count"] == 0
+    assert payload["summary"]["average_rating"] is None
+    assert len(payload["items"]) == 0
+
+
+def test_approved_review_is_visible_publicly(client):
+    headers = create_customer_headers(client, email="approved-review@example.com", phone="+254788000444")
+    product = create_review_product()
+    complete_purchase(client, headers, "approved-review@example.com", product.id)
+    create_response = client.post(
+        "/api/v1/reviews",
+        json={"product_id": product.id, "rating": 5, "comment": "Excellent."},
+        headers=headers,
+    )
+    review = Review.query.get(create_response.get_json()["item"]["id"])
+    review.status = Review.STATUS_APPROVED
+    db.session.commit()
 
     response = client.get(f"/api/v1/products/{product.slug}/reviews")
 

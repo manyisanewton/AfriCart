@@ -15,6 +15,7 @@ export interface StockAlertItem {
 
 function readApiError(err: any) {
   return err?.data?.error?.detail
+    || err?.data?.error?.message
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
@@ -30,14 +31,21 @@ export function useStockAlerts() {
     error.value = null
 
     try {
-      const result = await request<{ results: StockAlertItem[], pagination: any }>('/admin/catalog/stock-alerts/', {
+      const result = await request<{ items: StockAlertItem[] }>('/admin/stock-alerts', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: (result.items || []).length,
+            num_pages: 1,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -53,11 +61,11 @@ export function useStockAlerts() {
     error.value = null
 
     try {
-      const result = await request<{ stock_alert: StockAlertItem }>(`/admin/catalog/stock-alerts/${id}/`, {
+      const result = await request<{ item: StockAlertItem }>(`/admin/stock-alerts/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.stock_alert }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)

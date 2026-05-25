@@ -25,7 +25,7 @@ export function useMedia() {
     loading.value = true
     error.value = null
     try {
-      const result = await request<{ results: MediaAsset[], pagination: any, summary: any }>('/admin/media/', {
+      const result = await request<{ items: any[], pagination: any, summary: any }>('/admin/media', {
         method: 'GET',
         query: {
           page: params.page || 1,
@@ -38,9 +38,15 @@ export function useMedia() {
         success: true,
         data: {
           ...result,
-          results: (result.results || []).map(item => ({
-            ...item,
+          results: (result.items || []).map(item => ({
+            id: item.id,
+            name: item.name,
             url: mediaUrl(item.url),
+            alt: item.alt || '',
+            productId: item.product_id,
+            productTitle: item.product_title,
+            displayOrder: item.display_order,
+            createdAt: item.created_at,
           })),
         },
       }
@@ -60,11 +66,23 @@ export function useMedia() {
     formData.append('product_id', String(productId))
     formData.append('alt', alt)
     try {
-      const result = await request<{ media: MediaAsset }>('/admin/media/', {
+      const result = await request<{ item: any }>('/admin/media', {
         method: 'POST',
         body: formData,
       })
-      return { success: true, data: { ...result.media, url: mediaUrl(result.media.url) } }
+      return {
+        success: true,
+        data: {
+          id: result.item.id,
+          name: result.item.name,
+          url: mediaUrl(result.item.url),
+          alt: result.item.alt || '',
+          productId: result.item.product_id,
+          productTitle: result.item.product_title,
+          displayOrder: result.item.display_order,
+          createdAt: result.item.created_at,
+        },
+      }
     }
     catch (err: any) {
       return { success: false, error: err?.data?.error?.detail || err?.message || 'Unknown error' }
@@ -73,7 +91,7 @@ export function useMedia() {
 
   async function deleteMedia(id: number) {
     try {
-      await request(`/admin/media/${id}/`, {
+      await request(`/admin/media/${id}`, {
         method: 'DELETE',
       })
       return { success: true }

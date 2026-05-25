@@ -12,6 +12,7 @@ export interface DashboardSessionUser {
   role: TechHiveDashboardRole
   is_active: boolean
   email_verified: boolean
+  must_change_password: boolean
   created_at: string
 }
 
@@ -52,6 +53,7 @@ export function useAuth() {
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isVendor = computed(() => user.value?.role === 'vendor')
   const hasDashboardAccess = computed(() => canUseDashboard(user.value))
+  const requiresPasswordChange = computed(() => Boolean(user.value?.must_change_password))
   const homeRoute = computed(() => getDashboardHomeRouteForRole(user.value?.role))
 
   async function refreshSession() {
@@ -177,6 +179,7 @@ export function useAuth() {
     isVendor,
     login,
     logout,
+    requiresPasswordChange,
     refreshSession,
     user,
   }

@@ -29,7 +29,7 @@ const form = reactive({
 
 const visibilityOptions = [
   { label: 'All categories', value: ALL_VISIBILITY },
-  { label: 'Public', value: 'public' },
+  { label: 'Visible', value: 'public' },
   { label: 'Hidden', value: 'hidden' },
 ]
 
@@ -146,6 +146,7 @@ async function submitCategory() {
         slug: payload.slug,
         description: payload.description,
         is_public: payload.is_public,
+        parent_id: payload.parent_id,
       })
     : await createCategory(payload)
 
@@ -230,7 +231,7 @@ onMounted(loadCategories)
 
     <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <CardsKpiCard2 name="Total categories" :value="totalItems" :budget="totalItems" color="#3d7cff" icon="i-lucide-folder-tree" :loading="isLoading" />
-      <CardsKpiCard2 name="Root categories" :value="rootCount" :budget="totalItems" color="#059669" icon="i-lucide-folder" :loading="isLoading" />
+      <CardsKpiCard2 name="Visible" :value="publicCount" :budget="totalItems" color="#059669" icon="i-lucide-eye" :loading="isLoading" />
       <CardsKpiCard2 name="Child categories" :value="childCount" :budget="totalItems" color="#7c3aed" icon="i-lucide-network" :loading="isLoading" />
       <CardsKpiCard2 name="Hidden" :value="hiddenCount" :budget="totalItems" color="#f59e0b" icon="i-lucide-eye-off" :loading="isLoading" />
     </div>
@@ -294,7 +295,7 @@ onMounted(loadCategories)
       :shown="filteredCategories.length"
       :total="totalItems"
       label="categories"
-      note="Editing a category keeps its current parent."
+      note="Create root or child categories for storefront browsing."
     />
 
     <AdminFormModal
@@ -320,11 +321,7 @@ onMounted(loadCategories)
             :items="parentOptions"
             value-attribute="value"
             option-attribute="label"
-            :disabled="Boolean(editingCategory)"
           />
-          <p v-if="editingCategory" class="mt-1 text-xs text-dimmed">
-            Parent changes are not supported by the current backend endpoint.
-          </p>
         </UFormField>
         <UFormField label="Visibility">
           <UCheckbox v-model="form.is_public" label="Visible in storefront navigation" />

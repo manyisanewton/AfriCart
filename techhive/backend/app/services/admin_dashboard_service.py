@@ -55,7 +55,7 @@ def build_admin_dashboard() -> dict:
 
     product_count = Product.query.count()
     inactive_product_count = Product.query.filter_by(is_active=False).count()
-    low_stock_product_count = Product.query.filter(Product.stock_quantity <= LOW_STOCK_THRESHOLD).count()
+    low_stock_product_count = Product.query.filter(Product.stock_quantity <= Product.low_stock_threshold).count()
 
     recent_orders = Order.query.order_by(Order.created_at.desc(), Order.id.desc()).limit(RECENT_LIMIT).all()
     recent_payments = Payment.query.order_by(Payment.created_at.desc(), Payment.id.desc()).limit(RECENT_LIMIT).all()

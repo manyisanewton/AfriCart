@@ -3,10 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import { productAPI } from "../services/api";
 import ProductGrid from "../components/product/ProductGrid";
 import "../styles/productListing.css";
-
-
-const FALLBACK_IMAGE = "https://placehold.co/400x400?text=No+Image";
-
 export default function ProductListingPage( { addToCart } ) {
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
@@ -34,16 +30,8 @@ export default function ProductListingPage( { addToCart } ) {
     const catRes = await productAPI.listCategories();
 
     const items = res.data.items || [];
-
-
-    const itemsWithImages = items.map(p => ({
-      ...p,
-      primary_image: p.primary_image || FALLBACK_IMAGE
-    }));
-
-
-    setProducts(itemsWithImages);
-    setAllProducts(itemsWithImages);
+    setProducts(items);
+    setAllProducts(items);
     setCategories(catRes.data.items || []);
   }
 
@@ -58,8 +46,8 @@ export default function ProductListingPage( { addToCart } ) {
 
     if (category !== "all") {
       filtered = filtered.filter(p =>
-        p.category?.slug === category ||
-        p.category?.name?.toLowerCase() === category.toLowerCase()
+        p.category_slug === category ||
+        p.category_name?.toLowerCase() === category.toLowerCase()
       );
     }
     filtered = filtered.filter(p => Number(p.price) <= price);
@@ -109,7 +97,7 @@ export default function ProductListingPage( { addToCart } ) {
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="all">All Categories</option>
             {categories.map(c => (
-              <option key={c.id} value={c.id}>
+              <option key={c.id} value={c.slug}>
                 {c.name}
               </option>
             ))}
@@ -166,7 +154,7 @@ export default function ProductListingPage( { addToCart } ) {
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
           <option value="all">All Categories</option>
           {categories.map(c => (
-            <option key={c.id} value={c.id}>
+            <option key={c.id} value={c.slug}>
               {c.name}
             </option>
           ))}

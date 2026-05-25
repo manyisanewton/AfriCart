@@ -1,80 +1,99 @@
-import type { ProductImageItem } from '~/types/ProductImage'
+export interface AdminProductItem {
+  id: number
+  name: string
+  slug: string
+  sku: string
+  short_description: string | null
+  description: string | null
+  price: string | null
+  compare_at_price: string | null
+  currency: string
+  stock_quantity: number
+  low_stock_threshold: number
+  in_stock: boolean
+  is_active: boolean
+  is_featured: boolean
+  average_rating: number | null
+  review_count: number
+  category: {
+    id: number
+    name: string
+    slug: string
+    description?: string | null
+    is_active?: boolean
+  }
+  brand: {
+    id: number
+    name: string
+    slug: string
+    description?: string | null
+    website_url?: string | null
+    logo_url?: string | null
+    is_active?: boolean
+  }
+  vendor: {
+    id: number
+    business_name: string
+    slug: string
+    status: string
+  }
+  primary_image?: {
+    id: number
+    image_url: string
+    alt_text?: string | null
+    is_primary?: boolean
+    sort_order?: number
+  } | null
+}
 
 export interface ProductListParams {
-  page?: number
-  pageSize?: number
   search?: string
   status?: 'active' | 'draft' | ''
-  sortBy?: string
-  sortDir?: 'asc' | 'desc'
 }
 
-const DEFAULT_CURRENCY = 'KES'
+function readApiError(err: any) {
+  const detail = err?.data?.error?.message || err?.data?.detail || err?.message
+  const errors = err?.data?.error?.errors || err?.data
 
-function mapSort(sortBy?: string, sortDir: 'asc' | 'desc' = 'asc') {
-  if (sortBy === 'price')
-    return sortDir === 'desc' ? 'price_desc' : 'price_asc'
-  if (sortBy === 'name')
-    return 'title_asc'
-  if (sortBy === 'id')
-    return 'newest'
-  return 'relevance'
-}
-
-function flattenCategories(results: any[] = []) {
-  const flattened: { label: string, value: string }[] = []
-  for (const category of results) {
-    flattened.push({ label: category.name, value: String(category.id) })
-    for (const child of category.children || [])
-      flattened.push({ label: `${category.name} / ${child.name}`, value: String(child.id) })
+  if (errors && typeof errors === 'object' && !Array.isArray(errors)) {
+    return Object.entries(errors)
+      .map(([field, messages]) => {
+        const text = Array.isArray(messages) ? messages.join(' ') : String(messages)
+        return `${field}: ${text}`
+      })
+      .join(' ')
   }
-  return flattened
+
+  return typeof detail === 'string' ? detail : 'Unknown error'
 }
 
-function mapProductDetailToForm(product: any) {
-  const firstCategoryId = product.categoryIds?.[0] ? String(product.categoryIds[0]) : ''
-  const specificationMap = Object.fromEntries((product.specifications || []).map((item: any) => [item.code, item.value]))
-
+function mapProductToRow(product: AdminProductItem) {
   return {
     id: product.id,
     name: product.name,
-    description: product.description || '',
-    price: Number(product.price || 0),
-    currency: product.currency || DEFAULT_CURRENCY,
-    originalPrice: undefined,
-    chargeTax: true,
     sku: product.sku || '',
-    stock: Number(product.stock || 0),
-    weight: product.weight ?? (specificationMap.weight_grams ? Number(specificationMap.weight_grams) : null),
-    dimensions: product.dimensions || specificationMap.dimensions || '',
-    status: product.status || (product.isPublic ? 'active' : 'draft'),
-    category: firstCategoryId,
-    brand: product.brand || specificationMap.brand || '',
-    tags: product.tags || specificationMap.tags || '',
-    images: (product.images || []).map((image: any) => ({
-      ...image,
-      src: mediaUrl(image.src),
-    })),
+    price: Number(product.price || 0),
+    currency: product.currency || 'KES',
+    status: product.is_active ? 'Active' : 'Draft',
+    category: product.category?.name || 'Uncategorized',
+      stock: Number(product.stock_quantity || 0),
+      lowStockThreshold: Number(product.low_stock_threshold ?? 5),
+      imageUrl: mediaUrl(product.primary_image?.image_url || ''),
+    updatedAt: '',
+    vendorName: product.vendor?.business_name || 'Unknown vendor',
+    rating: product.average_rating,
+    reviewCount: Number(product.review_count || 0),
+    isActive: Boolean(product.is_active),
+    raw: product,
   }
 }
 
-function mapFormToPayload(data: Record<string, any>) {
-  return {
-    upc: data.sku,
-    title: data.name,
-    description: data.description || '',
-    is_public: data.status === 'active',
-    category_ids: data.category && data.category !== '__uncategorized__' ? [Number(data.category)] : [],
-    price: Number(data.price || 0),
-    currency: data.currency || DEFAULT_CURRENCY,
-    num_in_stock: Number(data.stock || 0),
-    attributes: {
-      weight_grams: data.weight ?? '',
-      dimensions: data.dimensions || '',
-      brand: data.brand || '',
-      tags: data.tags || '',
-    },
-  }
+function slugify(value: string) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
 export function useProduct() {
@@ -86,31 +105,161 @@ export function useProduct() {
     loading.value = true
     error.value = null
     try {
-      const response = await request<{ results: any[], pagination: any }>('/admin/products/', {
+      const response = await request<{ items: AdminProductItem[] }>('/admin/products', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 10,
-          q: params.search || '',
-          status: params.status || '',
-          sort_by: mapSort(params.sortBy, params.sortDir || 'asc'),
-        },
       })
+
+      let items = (response.items || []).map(mapProductToRow)
+
+      const query = String(params.search || '').trim().toLowerCase()
+      if (query) {
+        items = items.filter(product =>
+          product.name.toLowerCase().includes(query)
+          || product.sku.toLowerCase().includes(query)
+          || product.category.toLowerCase().includes(query)
+          || product.vendorName.toLowerCase().includes(query),
+        )
+      }
+
+      if (params.status === 'active')
+        items = items.filter(product => product.isActive)
+      else if (params.status === 'draft')
+        items = items.filter(product => !product.isActive)
+
       return {
         success: true,
         data: {
-          ...response,
-          results: (response.results || []).map(product => ({
-            ...product,
-            currency: product.currency || DEFAULT_CURRENCY,
-            imageUrl: mediaUrl(product.imageUrl),
-          })),
+          results: items,
+          pagination: {
+            total: items.length,
+            num_pages: 1,
+          },
         },
       }
     }
     catch (err: any) {
-      error.value = err?.data?.error?.detail || err?.message || 'Unknown error'
+      error.value = readApiError(err)
       return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function getCategoryOptions() {
+    try {
+      const result = await request<{ items: Array<{ id: number, name: string }> }>('/categories', { method: 'GET' })
+      return {
+        success: true,
+        data: (result.items || []).map(category => ({
+          label: category.name,
+          value: String(category.id),
+        })),
+      }
+    }
+    catch (err: any) {
+      return { success: false, error: readApiError(err), data: [] }
+    }
+  }
+
+  async function getBrandOptions() {
+    try {
+      const result = await request<{ items: Array<{ id: number, name: string }> }>('/brands', { method: 'GET' })
+      return {
+        success: true,
+        data: (result.items || []).map(brand => ({
+          label: brand.name,
+          value: String(brand.id),
+        })),
+      }
+    }
+    catch (err: any) {
+      return { success: false, error: readApiError(err), data: [] }
+    }
+  }
+
+  async function getVendorOptions() {
+    try {
+      const result = await request<{ items: Array<{ id: number, business_name: string, status: string }> }>('/admin/vendors', {
+        method: 'GET',
+      })
+      return {
+        success: true,
+        data: (result.items || []).map(vendor => ({
+          label: `${vendor.business_name} (${vendor.status})`,
+          value: String(vendor.id),
+        })),
+      }
+    }
+    catch (err: any) {
+      return { success: false, error: readApiError(err), data: [] }
+    }
+  }
+
+  function mapFormToPayload(data: Record<string, any>) {
+    const name = String(data.name || '').trim()
+    const slug = slugify(name)
+    const sku = String(data.sku || '').trim() || slug.toUpperCase().replace(/-/g, '-')
+
+    return {
+      vendor_id: Number(data.vendor),
+      category_id: Number(data.category),
+      brand_id: Number(data.brand),
+      name,
+      slug,
+      sku,
+      short_description: String(data.description || '').trim().slice(0, 255) || null,
+      description: String(data.description || '').trim() || null,
+      price: Number(data.price || 0),
+      compare_at_price: data.originalPrice === undefined ? null : Number(data.originalPrice || 0),
+      currency: data.currency || 'KES',
+      stock_quantity: Number(data.stock || 0),
+      low_stock_threshold: Number(data.lowStockThreshold ?? 5),
+      is_active: data.status === 'active',
+      is_featured: false,
+    }
+  }
+
+  function mapProductDetailToForm(product: AdminProductItem) {
+    return {
+      id: product.id,
+      name: product.name,
+      description: product.description || '',
+      price: Number(product.price || 0),
+      currency: product.currency || 'KES',
+      originalPrice: product.compare_at_price ? Number(product.compare_at_price) : undefined,
+      chargeTax: true,
+      sku: product.sku || '',
+      stock: Number(product.stock_quantity || 0),
+      lowStockThreshold: Number(product.low_stock_threshold ?? 5),
+      weight: null,
+      dimensions: '',
+      status: product.is_active ? 'active' : 'draft',
+      vendor: String(product.vendor?.id || ''),
+      category: String(product.category?.id || ''),
+      brand: String(product.brand?.id || ''),
+      tags: '',
+      images: (product.images || []).map((image: any) => ({
+        id: image.id,
+        src: mediaUrl(image.image_url),
+        alt: image.alt_text || '',
+      })),
+    }
+  }
+
+  async function createProduct(data: Record<string, unknown>) {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await request<{ item: AdminProductItem }>('/admin/products', {
+        method: 'POST',
+        body: mapFormToPayload(data as Record<string, any>),
+      })
+      return { success: true, data: result.item }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value, errors: err?.data?.error?.errors || null }
     }
     finally {
       loading.value = false
@@ -121,43 +270,14 @@ export function useProduct() {
     loading.value = true
     error.value = null
     try {
-      const result = await request<{ product: any }>(`/admin/products/${id}/`, {
+      const result = await request<{ item: AdminProductItem }>(`/admin/products/${id}`, {
         method: 'GET',
       })
-      return { success: true, data: mapProductDetailToForm(result.product), raw: result.product }
+      return { success: true, data: mapProductDetailToForm(result.item), raw: result.item }
     }
     catch (err: any) {
-      error.value = err?.data?.error?.detail || err?.message || 'Unknown error'
+      error.value = readApiError(err)
       return { success: false, error: error.value }
-    }
-    finally {
-      loading.value = false
-    }
-  }
-
-  async function getCategoryOptions() {
-    try {
-      const result = await request<{ results: any[] }>('/catalog/categories/', { method: 'GET' })
-      return { success: true, data: flattenCategories(result.results || []) }
-    }
-    catch (err: any) {
-      return { success: false, error: err?.data?.error?.detail || err?.message || 'Unknown error', data: [] }
-    }
-  }
-
-  async function createProduct(data: Record<string, unknown>) {
-    loading.value = true
-    error.value = null
-    try {
-      const result = await request<{ product: any }>('/catalog/products/', {
-        method: 'POST',
-        body: mapFormToPayload(data),
-      })
-      return { success: true, data: result.product }
-    }
-    catch (err: any) {
-      error.value = err?.data?.error?.detail || err?.message || 'Unknown error'
-      return { success: false, error: error.value, errors: err?.data?.error?.errors || null }
     }
     finally {
       loading.value = false
@@ -168,14 +288,14 @@ export function useProduct() {
     loading.value = true
     error.value = null
     try {
-      const result = await request<{ product: any }>(`/catalog/products/${id}/`, {
+      const result = await request<{ item: AdminProductItem }>(`/admin/products/${id}`, {
         method: 'PATCH',
-        body: mapFormToPayload(data),
+        body: mapFormToPayload(data as Record<string, any>),
       })
-      return { success: true, data: result.product }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
-      error.value = err?.data?.error?.detail || err?.message || 'Unknown error'
+      error.value = readApiError(err)
       return { success: false, error: error.value, errors: err?.data?.error?.errors || null }
     }
     finally {
@@ -187,13 +307,13 @@ export function useProduct() {
     loading.value = true
     error.value = null
     try {
-      await request(`/catalog/products/${id}/`, {
+      await request(`/admin/products/${id}`, {
         method: 'DELETE',
       })
       return { success: true }
     }
     catch (err: any) {
-      error.value = err?.data?.error?.detail || err?.message || 'Unknown error'
+      error.value = readApiError(err)
       return { success: false, error: error.value }
     }
     finally {
@@ -206,30 +326,37 @@ export function useProduct() {
       return { success: true, data: image }
 
     const formData = new FormData()
-    formData.append('image', image.file)
+    formData.append('file', image.file)
     formData.append('alt', image.alt || '')
 
     try {
-      const result = await request<{ image: ProductImageItem }>(`/admin/products/${productId}/images/`, {
+      const result = await request<{ item: { id: number, image_url: string, alt_text: string | null } }>(`/admin/products/${productId}/images`, {
         method: 'POST',
         body: formData,
       })
-      return { success: true, data: { ...result.image, src: mediaUrl(result.image.src) } }
+      return {
+        success: true,
+        data: {
+          id: result.item.id,
+          src: mediaUrl(result.item.image_url),
+          alt: result.item.alt_text || '',
+        },
+      }
     }
     catch (err: any) {
-      return { success: false, error: err?.data?.error?.detail || err?.message || 'Unknown error' }
+      return { success: false, error: readApiError(err) }
     }
   }
 
   async function deleteProductImage(productId: number | string, imageId: number) {
     try {
-      await request(`/admin/products/${productId}/images/${imageId}/`, {
+      await request(`/admin/products/${productId}/images/${imageId}`, {
         method: 'DELETE',
       })
       return { success: true }
     }
     catch (err: any) {
-      return { success: false, error: err?.data?.error?.detail || err?.message || 'Unknown error' }
+      return { success: false, error: readApiError(err) }
     }
   }
 
@@ -260,17 +387,37 @@ export function useProduct() {
     return { success: true, data: persistedImages }
   }
 
+  async function updateProductActive(id: number | string, isActive: boolean) {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await request<{ item: AdminProductItem }>(`/admin/products/${id}/active`, {
+        method: 'PATCH',
+        body: { is_active: isActive },
+      })
+      return { success: true, data: mapProductToRow(result.item), raw: result.item }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
   return {
-    loading,
-    error,
     createProduct,
     deleteProduct,
-    deleteProductImage,
+    error,
+    getBrandOptions,
+    getCategoryOptions,
     getProduct,
     getProducts,
-    getCategoryOptions,
+    getVendorOptions,
+    loading,
     syncProductImages,
-    uploadProductImage,
     updateProduct,
+    updateProductActive,
   }
 }

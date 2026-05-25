@@ -24,6 +24,7 @@ export interface VoucherPayload {
 
 function readApiError(err: any) {
   return err?.data?.error?.detail
+    || err?.data?.error?.message
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
@@ -39,14 +40,20 @@ export function useVouchers() {
     error.value = null
 
     try {
-      const result = await request<{ results: VoucherItem[], pagination: any }>('/admin/vouchers/', {
+      const result = await request<{ items: VoucherItem[] }>('/admin/vouchers', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: result.items?.length || 0,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -62,11 +69,11 @@ export function useVouchers() {
     error.value = null
 
     try {
-      const result = await request<{ voucher: VoucherItem }>('/admin/vouchers/', {
+      const result = await request<{ item: VoucherItem }>('/admin/vouchers', {
         method: 'POST',
         body: payload,
       })
-      return { success: true, data: result.voucher }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -82,11 +89,11 @@ export function useVouchers() {
     error.value = null
 
     try {
-      const result = await request<{ voucher: VoucherItem }>(`/admin/vouchers/${id}/`, {
+      const result = await request<{ item: VoucherItem }>(`/admin/vouchers/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.voucher }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -102,7 +109,7 @@ export function useVouchers() {
     error.value = null
 
     try {
-      await request(`/admin/vouchers/${id}/`, { method: 'DELETE' })
+      await request(`/admin/vouchers/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {
@@ -119,8 +126,8 @@ export function useVouchers() {
     error.value = null
 
     try {
-      const result = await request<{ stats: VoucherItem }>(`/admin/vouchers/${id}/stats/`, { method: 'GET' })
-      return { success: true, data: result.stats }
+      const result = await request<{ item: VoucherItem }>(`/admin/vouchers/${id}/stats`, { method: 'GET' })
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -136,8 +143,8 @@ export function useVouchers() {
     error.value = null
 
     try {
-      const result = await request<{ results: OfferItem[] }>(`/admin/vouchers/${id}/offers/`, { method: 'GET' })
-      return { success: true, data: result.results }
+      const result = await request<{ items: OfferItem[] }>(`/admin/vouchers/${id}/offers`, { method: 'GET' })
+      return { success: true, data: result.items || [] }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -153,11 +160,11 @@ export function useVouchers() {
     error.value = null
 
     try {
-      const result = await request<{ voucher: VoucherItem }>(`/admin/vouchers/${id}/offers/`, {
+      const result = await request<{ item: VoucherItem }>(`/admin/vouchers/${id}/offers`, {
         method: 'POST',
         body: { offer_id: offerId },
       })
-      return { success: true, data: result.voucher }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -173,11 +180,11 @@ export function useVouchers() {
     error.value = null
 
     try {
-      const result = await request<{ voucher: VoucherItem }>(`/admin/vouchers/${id}/offers/`, {
+      const result = await request<{ item: VoucherItem }>(`/admin/vouchers/${id}/offers`, {
         method: 'DELETE',
         body: { offer_id: offerId },
       })
-      return { success: true, data: result.voucher }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)

@@ -9,8 +9,8 @@ export default function ProductCard({ product }) {
       </div>
 
       <img
-        src={p.primary_image || "https://via.placeholder.com/300"}
-        alt={p.name}
+        src={product.primary_image || "https://via.placeholder.com/300"}
+        alt={product.name}
       />
       
       <h3>{product.name}</h3>

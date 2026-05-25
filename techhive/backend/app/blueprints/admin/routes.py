@@ -1,10 +1,16 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 from flask import current_app, g, jsonify, request
+from sqlalchemy import or_
 
 from app.blueprints.auth.helpers import validation_error
 from app.blueprints.admin import admin_bp
 from app.blueprints.admin.schemas import (
+    validate_admin_user_create_payload,
+    validate_admin_order_update_payload,
+    validate_admin_product_payload,
+    validate_admin_product_update_payload,
     validate_banner_payload,
     validate_banner_update_payload,
     validate_bulk_email_payload,
@@ -14,6 +20,11 @@ from app.blueprints.admin.schemas import (
     validate_named_entity_payload,
     validate_named_entity_update_payload,
     validate_notification_delivery_retry_payload,
+    validate_offer_component_payload,
+    validate_offer_component_update_payload,
+    validate_offer_payload,
+    validate_offer_status_payload,
+    validate_offer_update_payload,
     validate_order_status_payload,
     validate_platform_setting_payload,
     validate_platform_setting_update_payload,
@@ -22,7 +33,21 @@ from app.blueprints.admin.schemas import (
     validate_promo_code_update_payload,
     validate_refund_status_payload,
     validate_product_active_payload,
+    validate_product_attribute_payload,
+    validate_product_attribute_update_payload,
+    validate_product_option_payload,
+    validate_product_option_update_payload,
+    validate_range_payload,
+    validate_range_product_payload,
+    validate_range_update_payload,
+    validate_product_type_payload,
+    validate_product_type_update_payload,
+    validate_voucher_offer_payload,
+    validate_voucher_payload,
+    validate_voucher_update_payload,
     validate_role_payload,
+    validate_admin_review_update_payload,
+    validate_stock_alert_status_payload,
     validate_support_ticket_status_payload,
     validate_user_active_payload,
     validate_vendor_kyc_status_payload,
@@ -35,27 +60,40 @@ from app.blueprints.products.schemas import (
     serialize_brand,
     serialize_category,
     serialize_flash_sale,
+    serialize_product_image,
     serialize_product,
 )
 from app.blueprints.payments.helpers import serialize_payment
 from app.extensions import db
 from app.middleware.role_required import role_required
 from app.models import (
+    Address,
     AuditLog,
     Banner,
     Brand,
     Category,
+    DeliveryAgent,
     FlashSale,
     NotificationChannel,
     NotificationType,
+    Offer,
+    OfferBenefit,
+    OfferCondition,
     Order,
     OrderStatus,
     NotificationDelivery,
     NotificationDeliveryStatus,
     PlatformSetting,
     Product,
+    ProductAttribute,
+    ProductImage,
+    ProductOption,
+    ProductRange,
+    ProductStockAlert,
+    ProductType,
     PromoCode,
     PromoCodeType,
+    Review,
     Refund,
     RefundStatus,
     SupportTicket,
@@ -88,6 +126,7 @@ from app.services.admin_reporting_service import (
     list_vendor_performance,
 )
 from app.services.bulk_email_service import dispatch_bulk_email_campaign
+from app.services.campaign_summary_service import build_campaign_summary
 from app.services.notification_dispatch_service import dispatch_bulk_notification
 from app.services.notification_dispatch_service import retry_notification_delivery
 from app.services.major_notification_service import (
@@ -102,16 +141,23 @@ from app.services.recommendation_settings_service import (
 from app.services.catalog_validation_service import (
     ensure_unique_brand_slug,
     ensure_unique_category_slug,
+    ensure_unique_product_slug_and_sku,
+    ensure_unique_product_slug_and_sku_for_update,
     ensure_unique_promo_code,
+    get_active_brand,
+    get_active_category,
     get_product_for_flash_sale,
 )
 from app.services.commerce_state_service import transition_order
 from app.services.payment_reconciliation_service import reconcile_stale_mpesa_payments
 from app.services.mpesa_logging_service import tail_mpesa_logs
+from app.services.storage_service import IMAGE_EXTENSIONS, delete_stored_file, save_uploaded_file
 from app.utils.api import get_json_payload, not_found_response, parse_positive_int
 from app.blueprints.notifications.schemas import serialize_notification_delivery
 from app.blueprints.support.schemas import serialize_support_ticket
 from app.blueprints.vendors.schemas import serialize_vendor_kyc_submission
+from app.services.email_service import send_email
+from app.utils.security import generate_temporary_password, hash_password
 
 
 def _not_found(message: str):
@@ -130,6 +176,232 @@ def _add_audit_log(*, action: str, entity_type: str, entity_id: int, metadata: d
     )
 
 
+def _serialize_media_asset(image: ProductImage) -> dict:
+    filename = Path(image.image_url).name if image.image_url else f"image-{image.id}"
+    return {
+        "id": image.id,
+        "name": filename,
+        "url": image.image_url,
+        "alt": image.alt_text or "",
+        "product_id": image.product_id,
+        "product_title": image.product.name if image.product else "",
+        "display_order": image.sort_order,
+        "created_at": image.created_at.isoformat() if image.created_at else None,
+        "is_primary": image.is_primary,
+    }
+
+
+def _serialize_product_type(product_type: ProductType) -> dict:
+    return {
+        "id": product_type.id,
+        "name": product_type.name,
+        "slug": product_type.slug,
+        "requires_shipping": product_type.requires_shipping,
+        "track_stock": product_type.track_stock,
+        "is_active": product_type.is_active,
+    }
+
+
+def _serialize_product_attribute(attribute: ProductAttribute) -> dict:
+    return {
+        "id": attribute.id,
+        "product_type_id": attribute.product_type_id,
+        "product_class_id": attribute.product_type_id,
+        "name": attribute.name,
+        "code": attribute.code,
+        "type": attribute.type,
+        "required": attribute.required,
+        "option_group_id": attribute.option_group_id,
+    }
+
+
+def _serialize_product_option(option: ProductOption) -> dict:
+    return {
+        "id": option.id,
+        "name": option.name,
+        "code": option.code,
+        "type": option.type,
+        "required": option.required,
+        "help_text": option.help_text or "",
+        "order": option.sort_order,
+    }
+
+
+def _humanize_offer_component_type(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return raw.replace("_", " ").replace("-", " ").title()
+
+
+def _build_offer_component_text(component_type: str | None, value, range_id: int | None) -> tuple[str, str]:
+    label = _humanize_offer_component_type(component_type) or "Component"
+    detail_parts = []
+    if value not in (None, ""):
+        detail_parts.append(str(value))
+    if range_id:
+        detail_parts.append(f"Range #{range_id}")
+
+    if detail_parts:
+        description = f"{label}: {' · '.join(detail_parts)}"
+    else:
+        description = label
+    return label, description
+
+
+def _serialize_offer_condition(condition: OfferCondition) -> dict:
+    name, description = _build_offer_component_text(condition.type, condition.value, condition.range_id)
+    return {
+        "id": condition.id,
+        "type": condition.type,
+        "range_id": condition.range_id,
+        "range_name": f"Range #{condition.range_id}" if condition.range_id else "",
+        "value": condition.value,
+        "proxy_class": condition.proxy_class or "",
+        "name": name,
+        "description": description,
+    }
+
+
+def _serialize_offer_benefit(benefit: OfferBenefit) -> dict:
+    name, description = _build_offer_component_text(benefit.type, benefit.value, benefit.range_id)
+    if benefit.max_affected_items:
+        description = f"{description} · Max {benefit.max_affected_items}"
+    return {
+        "id": benefit.id,
+        "type": benefit.type,
+        "range_id": benefit.range_id,
+        "range_name": f"Range #{benefit.range_id}" if benefit.range_id else "",
+        "value": benefit.value,
+        "proxy_class": benefit.proxy_class or "",
+        "name": name,
+        "description": description,
+        "max_affected_items": benefit.max_affected_items,
+    }
+
+
+def _serialize_offer(offer: Offer) -> dict:
+    return {
+        "id": offer.id,
+        "name": offer.name,
+        "slug": offer.slug,
+        "description": offer.description or "",
+        "offer_type": offer.offer_type,
+        "exclusive": offer.exclusive,
+        "status": offer.status,
+        "priority": offer.priority,
+        "start_datetime": offer.start_datetime.isoformat() if offer.start_datetime else None,
+        "end_datetime": offer.end_datetime.isoformat() if offer.end_datetime else None,
+        "num_applications": offer.num_applications or 0,
+        "num_orders": offer.num_orders or 0,
+        "total_discount": f"{offer.total_discount:.2f}",
+        "condition_id": offer.condition_id,
+        "benefit_id": offer.benefit_id,
+        "condition": _serialize_offer_condition(offer.condition) if offer.condition else None,
+        "benefit": _serialize_offer_benefit(offer.benefit) if offer.benefit else None,
+        "voucher_ids": [],
+    }
+
+
+def _serialize_voucher(promo_code: PromoCode) -> dict:
+    return {
+        "id": promo_code.id,
+        "name": promo_code.name,
+        "code": promo_code.code,
+        "usage": promo_code.usage,
+        "start_datetime": promo_code.starts_at.isoformat() if promo_code.starts_at else None,
+        "end_datetime": promo_code.ends_at.isoformat() if promo_code.ends_at else None,
+        "num_basket_additions": 0,
+        "num_orders": 0,
+        "total_discount": "0.00",
+        "date_created": promo_code.created_at.isoformat() if promo_code.created_at else None,
+        "offers": [_serialize_offer(offer) for offer in promo_code.offers],
+    }
+
+
+def _serialize_range_item(product_range: ProductRange) -> dict:
+    num_products = Product.query.count() if product_range.includes_all_products else len(product_range.products)
+    return {
+        "id": product_range.id,
+        "name": product_range.name,
+        "slug": product_range.slug,
+        "description": product_range.description or "",
+        "is_public": product_range.is_public,
+        "includes_all_products": product_range.includes_all_products,
+        "num_products": num_products,
+    }
+
+
+def _serialize_range_product(product: Product) -> dict:
+    return {
+        "id": product.id,
+        "title": product.name,
+        "upc": product.sku,
+    }
+
+
+def _serialize_stock_alert(alert: ProductStockAlert) -> dict:
+    product = alert.product
+    return {
+        "id": alert.id,
+        "status": alert.status,
+        "threshold": alert.threshold,
+        "date_created": alert.created_at.isoformat() if alert.created_at else None,
+        "date_closed": alert.closed_at.isoformat() if alert.closed_at else None,
+        "stockrecord": {
+            "id": product.id if product else None,
+            "partner_sku": product.sku if product else "",
+            "num_in_stock": product.stock_quantity if product else 0,
+            "product_id": product.id if product else None,
+            "product_title": product.name if product else "",
+        },
+    }
+
+
+def _serialize_admin_review(review: Review) -> dict:
+    return {
+        "id": review.id,
+        "product_id": review.product_id,
+        "product_title": review.product.name if review.product else "",
+        "score": review.rating,
+        "title": review.title or "",
+        "body": review.comment,
+        "user_id": review.user_id,
+        "name": review.user.full_name if review.user else "",
+        "email": review.user.email if review.user else "",
+        "status": review.status,
+        "date_created": review.created_at.isoformat() if review.created_at else None,
+    }
+
+
+def _ensure_stock_alerts_for_low_stock_products() -> None:
+    products = Product.query.filter(Product.stock_quantity <= Product.low_stock_threshold).all()
+    existing_by_product_id = {
+        alert.product_id: alert
+        for alert in ProductStockAlert.query.all()
+    }
+    changed = False
+
+    for product in products:
+        alert = existing_by_product_id.get(product.id)
+        if alert is None:
+            db.session.add(
+                ProductStockAlert(
+                    product_id=product.id,
+                    threshold=product.low_stock_threshold,
+                    status="open",
+                )
+            )
+            changed = True
+        else:
+            if alert.threshold != product.low_stock_threshold:
+                alert.threshold = product.low_stock_threshold
+                changed = True
+
+    if changed:
+        db.session.commit()
+
+
 def _serialize_user_brief(user: User) -> dict:
     return {
         "id": user.id,
@@ -137,6 +409,128 @@ def _serialize_user_brief(user: User) -> dict:
         "full_name": user.full_name,
         "phone_number": user.phone_number,
         "role": user.role.value,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
+def _serialize_delivery_agent_brief(agent: DeliveryAgent) -> dict:
+    return {
+        "id": agent.id,
+        "display_name": agent.display_name,
+        "phone_number": agent.phone_number,
+        "is_active": agent.is_active,
+    }
+
+
+def _serialize_address_brief(address: Address) -> dict:
+    return {
+        "id": address.id,
+        "label": address.label,
+        "recipient_name": address.recipient_name,
+        "phone_number": address.phone_number,
+        "country": address.country,
+        "city": address.city,
+        "state_or_county": address.state_or_county,
+        "postal_code": address.postal_code,
+        "address_line_1": address.address_line_1,
+        "address_line_2": address.address_line_2,
+        "is_default": address.is_default,
+    }
+
+
+def _serialize_vendor_profile_brief(vendor: Vendor | None) -> dict | None:
+    if vendor is None:
+        return None
+    return {
+        "id": vendor.id,
+        "business_name": vendor.business_name,
+        "slug": vendor.slug,
+        "phone_number": vendor.phone_number,
+        "support_email": vendor.support_email,
+        "status": vendor.status.value,
+        "is_verified": vendor.is_verified,
+    }
+
+
+def _serialize_delivery_agent_profile_brief(agent: DeliveryAgent | None) -> dict | None:
+    if agent is None:
+        return None
+    return {
+        "id": agent.id,
+        "display_name": agent.display_name,
+        "phone_number": agent.phone_number,
+        "is_active": agent.is_active,
+        "created_at": agent.created_at.isoformat() if agent.created_at else None,
+    }
+
+
+def _serialize_user_activity_item(*, item_id: int, label: str, status: str | None, created_at) -> dict:
+    return {
+        "id": item_id,
+        "label": label,
+        "status": status,
+        "created_at": created_at.isoformat() if created_at else None,
+    }
+
+
+def _serialize_user_detail(user: User) -> dict:
+    orders = sorted(user.orders or [], key=lambda item: (item.created_at or datetime.min.replace(tzinfo=timezone.utc), item.id), reverse=True)
+    tickets = sorted(
+        user.support_tickets or [],
+        key=lambda item: (item.created_at or datetime.min.replace(tzinfo=timezone.utc), item.id),
+        reverse=True,
+    )
+    reviews = sorted(
+        user.reviews or [],
+        key=lambda item: (item.created_at or datetime.min.replace(tzinfo=timezone.utc), item.id),
+        reverse=True,
+    )
+
+    return {
+        **_serialize_user_brief(user),
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "is_active": user.is_active,
+        "email_verified": user.email_verified,
+        "must_change_password": user.must_change_password,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        "addresses": [_serialize_address_brief(address) for address in user.addresses or []],
+        "vendor_profile": _serialize_vendor_profile_brief(user.vendor_profile),
+        "delivery_agent_profile": _serialize_delivery_agent_profile_brief(user.delivery_agent_profile),
+        "metrics": {
+            "orders": len(orders),
+            "reviews": len(reviews),
+            "support_tickets": len(tickets),
+            "addresses": len(user.addresses or []),
+            "wishlist_items": len(user.wishlist_items or []),
+        },
+        "recent_orders": [
+            _serialize_user_activity_item(
+                item_id=order.id,
+                label=order.order_number,
+                status=order.status.value,
+                created_at=order.created_at,
+            )
+            for order in orders[:5]
+        ],
+        "recent_support_tickets": [
+            _serialize_user_activity_item(
+                item_id=ticket.id,
+                label=ticket.subject,
+                status=ticket.status.value,
+                created_at=ticket.created_at,
+            )
+            for ticket in tickets[:5]
+        ],
+        "recent_reviews": [
+            _serialize_user_activity_item(
+                item_id=review.id,
+                label=review.title or f"Review #{review.id}",
+                status=str(getattr(review, "status", None)),
+                created_at=review.created_at,
+            )
+            for review in reviews[:5]
+        ],
     }
 
 
@@ -179,6 +573,65 @@ def list_users():
     )
 
 
+@admin_bp.post("/users")
+@role_required(UserRole.ADMIN.value)
+def create_user():
+    payload = validate_admin_user_create_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    if User.query.filter_by(email=payload["email"]).first():
+        return validation_error({"email": "An account with that email already exists."})
+
+    phone_number = payload["phone_number"]
+    if phone_number and User.query.filter_by(phone_number=phone_number).first():
+        return validation_error({"phone_number": "An account with that phone number already exists."})
+
+    temporary_password = generate_temporary_password()
+    user = User(
+        email=payload["email"],
+        password_hash=hash_password(temporary_password),
+        first_name=payload["first_name"],
+        last_name=payload["last_name"],
+        phone_number=phone_number,
+        role=UserRole(payload["role"]),
+        is_active=payload["is_active"],
+        email_verified=payload["email_verified"],
+        must_change_password=True,
+    )
+    db.session.add(user)
+    db.session.flush()
+    delivery = send_email(
+        to_email=user.email,
+        subject="Your TechHive account is ready",
+        template="user_invitation",
+        context={
+            "user_name": user.full_name,
+            "email": user.email,
+            "temporary_password": temporary_password,
+            "role": user.role.value.replace("_", " ").title(),
+            "must_change_password": True,
+        },
+    )
+    _add_audit_log(
+        action="admin.user_created",
+        entity_type="user",
+        entity_id=user.id,
+        metadata={"email": user.email, "role": user.role.value, "is_active": user.is_active, "delivery_status": delivery.get("status")},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_user_detail(user), "delivery": delivery}), 201
+
+
+@admin_bp.get("/users/<int:user_id>")
+@role_required(UserRole.ADMIN.value)
+def get_user_detail(user_id: int):
+    user = db.session.get(User, user_id)
+    if user is None:
+        return _not_found("User not found.")
+    return jsonify({"item": _serialize_user_detail(user)})
+
+
 @admin_bp.get("/dashboard")
 @role_required(UserRole.ADMIN.value)
 def get_admin_dashboard():
@@ -207,6 +660,15 @@ def get_admin_vendor_performance_report():
     if limit <= 0:
         return validation_error({"limit": "limit must be a positive integer."})
     return jsonify({"items": list_vendor_performance(limit=limit)})
+
+
+@admin_bp.get("/campaigns")
+@role_required(UserRole.ADMIN.value)
+def get_admin_campaigns():
+    days = request.args.get("days", default=30, type=int)
+    if days <= 0:
+        return validation_error({"days": "days must be a positive integer."})
+    return jsonify(build_campaign_summary(days=days))
 
 
 @admin_bp.get("/operations/queues")
@@ -800,7 +1262,14 @@ def create_category():
     if uniqueness_error:
         return validation_error(uniqueness_error.details)
 
+    parent_id = payload.get("parent_id")
+    if parent_id is not None:
+        parent = db.session.get(Category, parent_id)
+        if parent is None:
+            return validation_error({"parent_id": "Parent category not found."})
+
     category = Category(
+        parent_id=parent_id,
         name=payload["name"],
         slug=payload["slug"],
         description=payload["description"],
@@ -811,7 +1280,7 @@ def create_category():
         action="admin.category_created",
         entity_type="category",
         entity_id=category.id,
-        metadata={"name": category.name, "slug": category.slug},
+        metadata={"name": category.name, "slug": category.slug, "parent_id": category.parent_id},
     )
     db.session.commit()
     return jsonify({"item": serialize_category(category)}), 201
@@ -834,7 +1303,7 @@ def update_category_detail(category_id: int):
         action="admin.category_updated",
         entity_type="category",
         entity_id=category.id,
-        metadata={"name": category.name, "slug": category.slug, "is_active": category.is_active},
+        metadata={"name": category.name, "slug": category.slug, "is_active": category.is_active, "parent_id": category.parent_id},
     )
     db.session.commit()
     return jsonify({"item": serialize_category(category)})
@@ -853,7 +1322,7 @@ def remove_category(category_id: int):
         action="admin.category_deleted",
         entity_type="category",
         entity_id=category.id,
-        metadata={"name": category.name, "slug": category.slug},
+        metadata={"name": category.name, "slug": category.slug, "parent_id": category.parent_id},
     )
     db.session.commit()
     return jsonify({"message": "Category deleted successfully."})
@@ -896,6 +1365,695 @@ def create_brand():
     )
     db.session.commit()
     return jsonify({"item": serialize_brand(brand)}), 201
+
+
+@admin_bp.get("/categories")
+@role_required(UserRole.ADMIN.value)
+def list_categories():
+    categories = Category.query.order_by(Category.name.asc(), Category.id.asc()).all()
+    return jsonify({"items": [serialize_category(category) for category in categories]})
+
+
+@admin_bp.get("/brands")
+@role_required(UserRole.ADMIN.value)
+def list_brands():
+    brands = Brand.query.order_by(Brand.name.asc(), Brand.id.asc()).all()
+    return jsonify({"items": [serialize_brand(brand) for brand in brands]})
+
+
+@admin_bp.get("/product-types")
+@role_required(UserRole.ADMIN.value)
+def list_product_types():
+    product_types = ProductType.query.order_by(ProductType.name.asc(), ProductType.id.asc()).all()
+    return jsonify({"items": [_serialize_product_type(product_type) for product_type in product_types]})
+
+
+@admin_bp.post("/product-types")
+@role_required(UserRole.ADMIN.value)
+def create_product_type():
+    payload = validate_product_type_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    duplicate = ProductType.query.filter_by(slug=payload["slug"]).first()
+    if duplicate is not None:
+        return validation_error({"slug": "A product type with that slug already exists."})
+
+    duplicate_name = ProductType.query.filter_by(name=payload["name"]).first()
+    if duplicate_name is not None:
+        return validation_error({"name": "A product type with that name already exists."})
+
+    product_type = ProductType(
+        name=payload["name"],
+        slug=payload["slug"],
+        requires_shipping=payload["requires_shipping"],
+        track_stock=payload["track_stock"],
+        is_active=payload["is_active"],
+    )
+    db.session.add(product_type)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.product_type_created",
+        entity_type="product_type",
+        entity_id=product_type.id,
+        metadata={"slug": product_type.slug},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_product_type(product_type)}), 201
+
+
+@admin_bp.patch("/product-types/<int:product_type_id>")
+@role_required(UserRole.ADMIN.value)
+def update_product_type_detail(product_type_id: int):
+    payload = validate_product_type_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    product_type = db.session.get(ProductType, product_type_id)
+    if product_type is None:
+        return _not_found("Product type not found.")
+
+    if "slug" in payload["provided_fields"]:
+        duplicate = ProductType.query.filter(ProductType.slug == payload["slug"], ProductType.id != product_type.id).first()
+        if duplicate is not None:
+            return validation_error({"slug": "A product type with that slug already exists."})
+
+    if "name" in payload["provided_fields"]:
+        duplicate_name = ProductType.query.filter(ProductType.name == payload["name"], ProductType.id != product_type.id).first()
+        if duplicate_name is not None:
+            return validation_error({"name": "A product type with that name already exists."})
+
+    for field in ("name", "slug", "requires_shipping", "track_stock", "is_active"):
+        if field in payload["provided_fields"]:
+            setattr(product_type, field, payload[field])
+
+    _add_audit_log(
+        action="admin.product_type_updated",
+        entity_type="product_type",
+        entity_id=product_type.id,
+        metadata={"slug": product_type.slug},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_product_type(product_type)})
+
+
+@admin_bp.delete("/product-types/<int:product_type_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_product_type_detail(product_type_id: int):
+    product_type = db.session.get(ProductType, product_type_id)
+    if product_type is None:
+        return _not_found("Product type not found.")
+
+    _add_audit_log(
+        action="admin.product_type_deleted",
+        entity_type="product_type",
+        entity_id=product_type.id,
+        metadata={"slug": product_type.slug},
+    )
+    db.session.delete(product_type)
+    db.session.commit()
+    return jsonify({"message": "Product type deleted successfully."})
+
+
+@admin_bp.get("/attributes")
+@role_required(UserRole.ADMIN.value)
+def list_product_attributes():
+    attributes = ProductAttribute.query.order_by(ProductAttribute.name.asc(), ProductAttribute.id.asc()).all()
+    return jsonify({"items": [_serialize_product_attribute(attribute) for attribute in attributes]})
+
+
+@admin_bp.post("/attributes")
+@role_required(UserRole.ADMIN.value)
+def create_product_attribute():
+    payload = validate_product_attribute_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    product_type = db.session.get(ProductType, payload["product_type_id"])
+    if product_type is None:
+        return validation_error({"product_type_id": "Selected product type was not found."})
+
+    duplicate = ProductAttribute.query.filter_by(
+        product_type_id=product_type.id,
+        code=payload["code"],
+    ).first()
+    if duplicate is not None:
+        return validation_error({"code": "An attribute with that code already exists for this product type."})
+
+    attribute = ProductAttribute(
+        product_type_id=product_type.id,
+        name=payload["name"],
+        code=payload["code"],
+        type=payload["type"],
+        required=payload["required"],
+        option_group_id=payload["option_group_id"],
+    )
+    db.session.add(attribute)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.product_attribute_created",
+        entity_type="product_attribute",
+        entity_id=attribute.id,
+        metadata={"code": attribute.code, "product_type_id": attribute.product_type_id},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_product_attribute(attribute)}), 201
+
+
+@admin_bp.patch("/attributes/<int:attribute_id>")
+@role_required(UserRole.ADMIN.value)
+def update_product_attribute_detail(attribute_id: int):
+    payload = validate_product_attribute_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    attribute = db.session.get(ProductAttribute, attribute_id)
+    if attribute is None:
+        return _not_found("Product attribute not found.")
+
+    if "code" in payload["provided_fields"]:
+        duplicate = ProductAttribute.query.filter(
+            ProductAttribute.product_type_id == attribute.product_type_id,
+            ProductAttribute.code == payload["code"],
+            ProductAttribute.id != attribute.id,
+        ).first()
+        if duplicate is not None:
+            return validation_error({"code": "An attribute with that code already exists for this product type."})
+
+    for field in ("name", "code", "type", "required", "option_group_id"):
+        if field in payload["provided_fields"]:
+            setattr(attribute, field, payload[field])
+
+    _add_audit_log(
+        action="admin.product_attribute_updated",
+        entity_type="product_attribute",
+        entity_id=attribute.id,
+        metadata={"code": attribute.code, "product_type_id": attribute.product_type_id},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_product_attribute(attribute)})
+
+
+@admin_bp.delete("/attributes/<int:attribute_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_product_attribute_detail(attribute_id: int):
+    attribute = db.session.get(ProductAttribute, attribute_id)
+    if attribute is None:
+        return _not_found("Product attribute not found.")
+
+    _add_audit_log(
+        action="admin.product_attribute_deleted",
+        entity_type="product_attribute",
+        entity_id=attribute.id,
+        metadata={"code": attribute.code, "product_type_id": attribute.product_type_id},
+    )
+    db.session.delete(attribute)
+    db.session.commit()
+    return jsonify({"message": "Product attribute deleted successfully."})
+
+
+@admin_bp.get("/options")
+@role_required(UserRole.ADMIN.value)
+def list_product_options():
+    options = ProductOption.query.order_by(ProductOption.sort_order.asc(), ProductOption.name.asc(), ProductOption.id.asc()).all()
+    return jsonify({"items": [_serialize_product_option(option) for option in options]})
+
+
+@admin_bp.post("/options")
+@role_required(UserRole.ADMIN.value)
+def create_product_option():
+    payload = validate_product_option_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    duplicate = ProductOption.query.filter_by(code=payload["code"]).first()
+    if duplicate is not None:
+        return validation_error({"code": "A product option with that code already exists."})
+
+    option = ProductOption(
+        name=payload["name"],
+        code=payload["code"],
+        type=payload["type"],
+        required=payload["required"],
+        help_text=payload["help_text"],
+        sort_order=payload["sort_order"],
+    )
+    db.session.add(option)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.product_option_created",
+        entity_type="product_option",
+        entity_id=option.id,
+        metadata={"code": option.code},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_product_option(option)}), 201
+
+
+@admin_bp.patch("/options/<int:option_id>")
+@role_required(UserRole.ADMIN.value)
+def update_product_option_detail(option_id: int):
+    payload = validate_product_option_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    option = db.session.get(ProductOption, option_id)
+    if option is None:
+        return _not_found("Product option not found.")
+
+    if "code" in payload["provided_fields"]:
+        duplicate = ProductOption.query.filter(
+            ProductOption.code == payload["code"],
+            ProductOption.id != option.id,
+        ).first()
+        if duplicate is not None:
+            return validation_error({"code": "A product option with that code already exists."})
+
+    for field in ("name", "code", "type", "required", "help_text", "sort_order"):
+        if field in payload:
+            setattr(option, field, payload[field])
+
+    _add_audit_log(
+        action="admin.product_option_updated",
+        entity_type="product_option",
+        entity_id=option.id,
+        metadata={"code": option.code},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_product_option(option)})
+
+
+@admin_bp.delete("/options/<int:option_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_product_option_detail(option_id: int):
+    option = db.session.get(ProductOption, option_id)
+    if option is None:
+        return _not_found("Product option not found.")
+
+    _add_audit_log(
+        action="admin.product_option_deleted",
+        entity_type="product_option",
+        entity_id=option.id,
+        metadata={"code": option.code},
+    )
+    db.session.delete(option)
+    db.session.commit()
+    return jsonify({"message": "Product option deleted successfully."})
+
+
+@admin_bp.get("/offers/meta")
+@role_required(UserRole.ADMIN.value)
+def get_offer_meta():
+    return jsonify(
+        {
+            "offer_types": [
+                {"value": "site", "label": "Site offer"},
+                {"value": "voucher", "label": "Voucher offer"},
+                {"value": "shipping", "label": "Shipping offer"},
+            ],
+            "offer_statuses": [
+                {"value": "Open", "label": "Open"},
+                {"value": "Suspended", "label": "Suspended"},
+                {"value": "Consumed", "label": "Consumed"},
+            ],
+            "condition_types": [
+                {"value": "count", "label": "Count"},
+                {"value": "value", "label": "Basket value"},
+                {"value": "coverage", "label": "Coverage"},
+            ],
+            "benefit_types": [
+                {"value": "percentage", "label": "Percentage discount"},
+                {"value": "fixed", "label": "Fixed discount"},
+                {"value": "multibuy", "label": "Multibuy"},
+                {"value": "shipping", "label": "Shipping benefit"},
+            ],
+        }
+    )
+
+
+@admin_bp.get("/offers")
+@role_required(UserRole.ADMIN.value)
+def list_offers():
+    offers = Offer.query.order_by(Offer.priority.desc(), Offer.created_at.desc(), Offer.id.desc()).all()
+    return jsonify({"items": [_serialize_offer(offer) for offer in offers]})
+
+
+@admin_bp.post("/offers")
+@role_required(UserRole.ADMIN.value)
+def create_offer():
+    payload = validate_offer_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    condition = db.session.get(OfferCondition, payload["condition_id"])
+    if condition is None:
+        return validation_error({"condition_id": "Selected condition was not found."})
+
+    benefit = db.session.get(OfferBenefit, payload["benefit_id"])
+    if benefit is None:
+        return validation_error({"benefit_id": "Selected benefit was not found."})
+
+    existing = Offer.query.filter(Offer.slug == payload["slug"]).first()
+    if existing is not None:
+        return validation_error({"slug": "slug must be unique."})
+
+    offer = Offer(**payload)
+    db.session.add(offer)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.offer_created",
+        entity_type="offer",
+        entity_id=offer.id,
+        metadata={"slug": offer.slug, "status": offer.status, "offer_type": offer.offer_type},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_offer(offer)}), 201
+
+
+@admin_bp.patch("/offers/<int:offer_id>")
+@role_required(UserRole.ADMIN.value)
+def update_offer_detail(offer_id: int):
+    payload = validate_offer_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    offer = db.session.get(Offer, offer_id)
+    if offer is None:
+        return _not_found("Offer not found.")
+
+    if "condition_id" in payload["provided_fields"]:
+        condition = db.session.get(OfferCondition, payload["condition_id"])
+        if condition is None:
+            return validation_error({"condition_id": "Selected condition was not found."})
+
+    if "benefit_id" in payload["provided_fields"]:
+        benefit = db.session.get(OfferBenefit, payload["benefit_id"])
+        if benefit is None:
+            return validation_error({"benefit_id": "Selected benefit was not found."})
+
+    if "slug" in payload["provided_fields"]:
+        existing = Offer.query.filter(Offer.slug == payload["slug"], Offer.id != offer.id).first()
+        if existing is not None:
+            return validation_error({"slug": "slug must be unique."})
+
+    for field in (
+        "name",
+        "slug",
+        "description",
+        "offer_type",
+        "exclusive",
+        "status",
+        "priority",
+        "start_datetime",
+        "end_datetime",
+        "condition_id",
+        "benefit_id",
+    ):
+        if field in payload["provided_fields"]:
+            setattr(offer, field, payload[field])
+
+    _add_audit_log(
+        action="admin.offer_updated",
+        entity_type="offer",
+        entity_id=offer.id,
+        metadata={"slug": offer.slug, "status": offer.status, "offer_type": offer.offer_type},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_offer(offer)})
+
+
+@admin_bp.patch("/offers/<int:offer_id>/status")
+@role_required(UserRole.ADMIN.value)
+def update_offer_status(offer_id: int):
+    payload = validate_offer_status_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    offer = db.session.get(Offer, offer_id)
+    if offer is None:
+        return _not_found("Offer not found.")
+
+    offer.status = payload["status"]
+    _add_audit_log(
+        action="admin.offer_status_updated",
+        entity_type="offer",
+        entity_id=offer.id,
+        metadata={"slug": offer.slug, "status": offer.status},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_offer(offer)})
+
+
+@admin_bp.delete("/offers/<int:offer_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_offer_detail(offer_id: int):
+    offer = db.session.get(Offer, offer_id)
+    if offer is None:
+        return _not_found("Offer not found.")
+
+    _add_audit_log(
+        action="admin.offer_deleted",
+        entity_type="offer",
+        entity_id=offer.id,
+        metadata={"slug": offer.slug, "status": offer.status},
+    )
+    db.session.delete(offer)
+    db.session.commit()
+    return jsonify({"message": "Offer deleted successfully."})
+
+
+@admin_bp.get("/offers/conditions")
+@role_required(UserRole.ADMIN.value)
+def list_offer_conditions():
+    items = OfferCondition.query.order_by(OfferCondition.created_at.desc(), OfferCondition.id.desc()).all()
+    return jsonify({"items": [_serialize_offer_condition(item) for item in items]})
+
+
+@admin_bp.post("/offers/conditions")
+@role_required(UserRole.ADMIN.value)
+def create_offer_condition():
+    payload = validate_offer_component_payload(get_json_payload(), kind="condition")
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    condition = OfferCondition(**payload)
+    db.session.add(condition)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.offer_condition_created",
+        entity_type="offer_condition",
+        entity_id=condition.id,
+        metadata={"type": condition.type},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_offer_condition(condition)}), 201
+
+
+@admin_bp.patch("/offers/conditions/<int:condition_id>")
+@role_required(UserRole.ADMIN.value)
+def update_offer_condition_detail(condition_id: int):
+    payload = validate_offer_component_update_payload(get_json_payload(), kind="condition")
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    condition = db.session.get(OfferCondition, condition_id)
+    if condition is None:
+        return _not_found("Offer condition not found.")
+
+    for field in ("type", "range_id", "value", "proxy_class"):
+        if field in payload["provided_fields"]:
+            setattr(condition, field, payload[field])
+
+    _add_audit_log(
+        action="admin.offer_condition_updated",
+        entity_type="offer_condition",
+        entity_id=condition.id,
+        metadata={"type": condition.type},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_offer_condition(condition)})
+
+
+@admin_bp.delete("/offers/conditions/<int:condition_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_offer_condition_detail(condition_id: int):
+    condition = db.session.get(OfferCondition, condition_id)
+    if condition is None:
+        return _not_found("Offer condition not found.")
+
+    linked_offer = Offer.query.filter_by(condition_id=condition.id).first()
+    if linked_offer is not None:
+        return validation_error({"condition": "Delete or update linked offers before deleting this condition."})
+
+    _add_audit_log(
+        action="admin.offer_condition_deleted",
+        entity_type="offer_condition",
+        entity_id=condition.id,
+        metadata={"type": condition.type},
+    )
+    db.session.delete(condition)
+    db.session.commit()
+    return jsonify({"message": "Offer condition deleted successfully."})
+
+
+@admin_bp.get("/offers/benefits")
+@role_required(UserRole.ADMIN.value)
+def list_offer_benefits():
+    items = OfferBenefit.query.order_by(OfferBenefit.created_at.desc(), OfferBenefit.id.desc()).all()
+    return jsonify({"items": [_serialize_offer_benefit(item) for item in items]})
+
+
+@admin_bp.post("/offers/benefits")
+@role_required(UserRole.ADMIN.value)
+def create_offer_benefit():
+    payload = validate_offer_component_payload(get_json_payload(), kind="benefit")
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    benefit = OfferBenefit(**payload)
+    db.session.add(benefit)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.offer_benefit_created",
+        entity_type="offer_benefit",
+        entity_id=benefit.id,
+        metadata={"type": benefit.type},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_offer_benefit(benefit)}), 201
+
+
+@admin_bp.patch("/offers/benefits/<int:benefit_id>")
+@role_required(UserRole.ADMIN.value)
+def update_offer_benefit_detail(benefit_id: int):
+    payload = validate_offer_component_update_payload(get_json_payload(), kind="benefit")
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    benefit = db.session.get(OfferBenefit, benefit_id)
+    if benefit is None:
+        return _not_found("Offer benefit not found.")
+
+    for field in ("type", "range_id", "value", "proxy_class", "max_affected_items"):
+        if field in payload["provided_fields"]:
+            setattr(benefit, field, payload[field])
+
+    _add_audit_log(
+        action="admin.offer_benefit_updated",
+        entity_type="offer_benefit",
+        entity_id=benefit.id,
+        metadata={"type": benefit.type},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_offer_benefit(benefit)})
+
+
+@admin_bp.delete("/offers/benefits/<int:benefit_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_offer_benefit_detail(benefit_id: int):
+    benefit = db.session.get(OfferBenefit, benefit_id)
+    if benefit is None:
+        return _not_found("Offer benefit not found.")
+
+    linked_offer = Offer.query.filter_by(benefit_id=benefit.id).first()
+    if linked_offer is not None:
+        return validation_error({"benefit": "Delete or update linked offers before deleting this benefit."})
+
+    _add_audit_log(
+        action="admin.offer_benefit_deleted",
+        entity_type="offer_benefit",
+        entity_id=benefit.id,
+        metadata={"type": benefit.type},
+    )
+    db.session.delete(benefit)
+    db.session.commit()
+    return jsonify({"message": "Offer benefit deleted successfully."})
+
+
+@admin_bp.get("/stock-alerts")
+@role_required(UserRole.ADMIN.value)
+def list_stock_alerts():
+    _ensure_stock_alerts_for_low_stock_products()
+    alerts = ProductStockAlert.query.order_by(ProductStockAlert.created_at.desc(), ProductStockAlert.id.desc()).all()
+    return jsonify({"items": [_serialize_stock_alert(alert) for alert in alerts]})
+
+
+@admin_bp.patch("/stock-alerts/<int:alert_id>")
+@role_required(UserRole.ADMIN.value)
+def update_stock_alert_detail(alert_id: int):
+    payload = validate_stock_alert_status_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    alert = db.session.get(ProductStockAlert, alert_id)
+    if alert is None:
+        return _not_found("Stock alert not found.")
+
+    alert.status = payload["status"]
+    alert.closed_at = datetime.now(timezone.utc) if payload["status"] == "closed" else None
+    _add_audit_log(
+        action="admin.stock_alert_updated",
+        entity_type="stock_alert",
+        entity_id=alert.id,
+        metadata={"status": alert.status, "product_id": alert.product_id},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_stock_alert(alert)})
+
+
+@admin_bp.get("/reviews")
+@role_required(UserRole.ADMIN.value)
+def list_reviews():
+    reviews = Review.query.order_by(Review.created_at.desc(), Review.id.desc()).all()
+    return jsonify({"items": [_serialize_admin_review(review) for review in reviews]})
+
+
+@admin_bp.patch("/reviews/<int:review_id>")
+@role_required(UserRole.ADMIN.value)
+def update_review_detail(review_id: int):
+    payload = validate_admin_review_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    review = db.session.get(Review, review_id)
+    if review is None:
+        return _not_found("Review not found.")
+
+    if "status" in payload["provided_fields"]:
+        review.status = payload["status"]
+    if "title" in payload["provided_fields"]:
+        review.title = payload["title"]
+    if "body" in payload["provided_fields"]:
+        review.comment = payload["body"]
+    if "score" in payload["provided_fields"]:
+        review.rating = payload["score"]
+
+    _add_audit_log(
+        action="admin.review_updated",
+        entity_type="review",
+        entity_id=review.id,
+        metadata={"product_id": review.product_id, "status": review.status},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_admin_review(review)})
+
+
+@admin_bp.delete("/reviews/<int:review_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_review_detail(review_id: int):
+    review = db.session.get(Review, review_id)
+    if review is None:
+        return _not_found("Review not found.")
+
+    _add_audit_log(
+        action="admin.review_deleted",
+        entity_type="review",
+        entity_id=review.id,
+        metadata={"product_id": review.product_id, "status": review.status},
+    )
+    db.session.delete(review)
+    db.session.commit()
+    return jsonify({"message": "Review deleted successfully."})
 
 
 @admin_bp.patch("/brands/<int:brand_id>")
@@ -956,6 +2114,377 @@ def list_products():
     return jsonify({"items": [serialize_product(product, include_related=True) for product in products]})
 
 
+@admin_bp.post("/products")
+@role_required(UserRole.ADMIN.value)
+def create_product():
+    payload = validate_admin_product_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    vendor = db.session.get(Vendor, payload["vendor_id"])
+    if vendor is None:
+        return validation_error({"vendor_id": "Selected vendor was not found."})
+
+    category, category_error = get_active_category(payload["category_id"])
+    if category_error:
+        return validation_error(category_error.details)
+
+    brand, brand_error = get_active_brand(payload["brand_id"])
+    if brand_error:
+        return validation_error(brand_error.details)
+
+    uniqueness_error = ensure_unique_product_slug_and_sku(
+        slug=payload["slug"],
+        sku=payload["sku"],
+    )
+    if uniqueness_error:
+        return validation_error(uniqueness_error.details)
+
+    product = Product(
+        vendor_id=vendor.id,
+        category_id=category.id,
+        brand_id=brand.id,
+        name=payload["name"],
+        slug=payload["slug"],
+        sku=payload["sku"],
+        short_description=payload["short_description"],
+        description=payload["description"],
+        price=payload["price"],
+        compare_at_price=payload["compare_at_price"],
+        currency=payload["currency"],
+        stock_quantity=payload["stock_quantity"],
+        low_stock_threshold=payload["low_stock_threshold"],
+        is_active=payload["is_active"],
+        is_featured=payload["is_featured"],
+    )
+    db.session.add(product)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.product_created",
+        entity_type="product",
+        entity_id=product.id,
+        metadata={"slug": product.slug, "vendor_id": product.vendor_id, "stock_quantity": product.stock_quantity, "low_stock_threshold": product.low_stock_threshold},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_product(product, include_related=True)}), 201
+
+
+@admin_bp.get("/products/<int:product_id>")
+@role_required(UserRole.ADMIN.value)
+def get_product_detail(product_id: int):
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _not_found("Product not found.")
+    return jsonify({"item": serialize_product(product, include_related=True)})
+
+
+@admin_bp.patch("/products/<int:product_id>")
+@role_required(UserRole.ADMIN.value)
+def update_product_detail(product_id: int):
+    payload = validate_admin_product_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _not_found("Product not found.")
+
+    if "vendor_id" in payload["provided_fields"]:
+        vendor = db.session.get(Vendor, payload["vendor_id"])
+        if vendor is None:
+            return validation_error({"vendor_id": "Selected vendor was not found."})
+        product.vendor_id = vendor.id
+
+    if "category_id" in payload["provided_fields"]:
+        category, category_error = get_active_category(payload["category_id"])
+        if category_error:
+            return validation_error(category_error.details)
+        product.category_id = category.id
+
+    if "brand_id" in payload["provided_fields"]:
+        brand, brand_error = get_active_brand(payload["brand_id"])
+        if brand_error:
+            return validation_error(brand_error.details)
+        product.brand_id = brand.id
+
+    uniqueness_error = ensure_unique_product_slug_and_sku_for_update(
+        slug=payload.get("slug"),
+        sku=payload.get("sku"),
+        product_id=product.id,
+    )
+    if uniqueness_error:
+        return validation_error(uniqueness_error.details)
+
+    for field in (
+        "name",
+        "slug",
+        "sku",
+        "price",
+        "compare_at_price",
+        "currency",
+        "stock_quantity",
+        "low_stock_threshold",
+        "short_description",
+        "description",
+        "is_active",
+        "is_featured",
+    ):
+        if field in payload["provided_fields"]:
+            setattr(product, field, payload[field])
+
+    _add_audit_log(
+        action="admin.product_updated",
+        entity_type="product",
+        entity_id=product.id,
+        metadata={"slug": product.slug, "vendor_id": product.vendor_id, "stock_quantity": product.stock_quantity, "low_stock_threshold": product.low_stock_threshold},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_product(product, include_related=True)})
+
+
+@admin_bp.delete("/products/<int:product_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_product_detail(product_id: int):
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _not_found("Product not found.")
+
+    _add_audit_log(
+        action="admin.product_deleted",
+        entity_type="product",
+        entity_id=product.id,
+        metadata={"slug": product.slug, "vendor_id": product.vendor_id},
+    )
+    db.session.delete(product)
+    db.session.commit()
+    return jsonify({"message": "Product deleted successfully."})
+
+
+@admin_bp.post("/products/<int:product_id>/images")
+@role_required(UserRole.ADMIN.value)
+def upload_product_image(product_id: int):
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _not_found("Product not found.")
+
+    upload = request.files.get("file") or request.files.get("image")
+    stored, storage_error = save_uploaded_file(
+        upload=upload,
+        folder=f"products/{product.id}",
+        allowed_extensions=IMAGE_EXTENSIONS,
+    )
+    if storage_error is not None:
+        return validation_error({storage_error.field: storage_error.message})
+
+    sort_order_raw = request.form.get("sort_order", "0")
+    try:
+        sort_order = int(sort_order_raw)
+    except (TypeError, ValueError):
+        return validation_error({"sort_order": "sort_order must be an integer."})
+
+    is_primary = str(request.form.get("is_primary", "false")).lower() == "true"
+    if not product.images:
+        is_primary = True
+    if is_primary:
+        for image in product.images:
+            image.is_primary = False
+
+    image = ProductImage(
+        product_id=product.id,
+        image_url=stored["url"],
+        alt_text=str(request.form.get("alt_text") or request.form.get("alt") or "").strip() or None,
+        is_primary=is_primary,
+        sort_order=sort_order,
+    )
+    db.session.add(image)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.product_image_uploaded",
+        entity_type="product",
+        entity_id=product.id,
+        metadata={"image_id": image.id, "is_primary": image.is_primary},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_product_image(image)}), 201
+
+
+@admin_bp.delete("/products/<int:product_id>/images/<int:image_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_product_image_detail(product_id: int, image_id: int):
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _not_found("Product not found.")
+
+    image = ProductImage.query.filter_by(id=image_id, product_id=product.id).first()
+    if image is None:
+        return _not_found("Product image not found.")
+
+    if image.image_url.startswith("/media/"):
+        delete_stored_file(image.image_url.removeprefix("/media/"))
+
+    was_primary = image.is_primary
+    db.session.delete(image)
+    db.session.flush()
+
+    if was_primary:
+        replacement = (
+            ProductImage.query.filter_by(product_id=product.id)
+            .order_by(ProductImage.sort_order.asc(), ProductImage.id.asc())
+            .first()
+        )
+        if replacement is not None:
+            replacement.is_primary = True
+
+    _add_audit_log(
+        action="admin.product_image_deleted",
+        entity_type="product",
+        entity_id=product.id,
+        metadata={"image_id": image_id},
+    )
+    db.session.commit()
+    return jsonify({"message": "Product image deleted successfully."})
+
+
+@admin_bp.get("/media")
+@role_required(UserRole.ADMIN.value)
+def list_media_assets():
+    page = request.args.get("page", 1)
+    page_size = request.args.get("page_size", 24)
+    query_text = str(request.args.get("q", "") or "").strip()
+    product_id_raw = request.args.get("product_id")
+
+    page_number, page_errors = parse_positive_int(page, field_name="page")
+    if page_errors:
+        return validation_error(page_errors)
+
+    page_size_value, page_size_errors = parse_positive_int(page_size, field_name="page_size")
+    if page_size_errors:
+        return validation_error(page_size_errors)
+
+    query = ProductImage.query.join(Product)
+    if product_id_raw not in (None, ""):
+        product_id, product_errors = parse_positive_int(product_id_raw, field_name="product_id")
+        if product_errors:
+            return validation_error(product_errors)
+        query = query.filter(ProductImage.product_id == product_id)
+
+    if query_text:
+        like = f"%{query_text}%"
+        query = query.filter(
+            or_(
+                Product.name.ilike(like),
+                Product.sku.ilike(like),
+                ProductImage.alt_text.ilike(like),
+                ProductImage.image_url.ilike(like),
+            )
+        )
+
+    total_assets = ProductImage.query.count()
+    matching_assets = query.count()
+    items = (
+        query.order_by(ProductImage.created_at.desc(), ProductImage.id.desc())
+        .offset((page_number - 1) * page_size_value)
+        .limit(page_size_value)
+        .all()
+    )
+    total_pages = max(1, (matching_assets + page_size_value - 1) // page_size_value)
+
+    return jsonify(
+        {
+            "items": [_serialize_media_asset(image) for image in items],
+            "pagination": {
+                "page": page_number,
+                "page_size": page_size_value,
+                "total": matching_assets,
+                "num_pages": total_pages,
+            },
+            "summary": {
+                "total": total_assets,
+                "matching": matching_assets,
+            },
+        }
+    )
+
+
+@admin_bp.post("/media")
+@role_required(UserRole.ADMIN.value)
+def upload_media_asset():
+    product_id_raw = request.form.get("product_id")
+    product_id, product_errors = parse_positive_int(product_id_raw, field_name="product_id")
+    if product_errors:
+        return validation_error(product_errors)
+
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _not_found("Product not found.")
+
+    upload = request.files.get("file") or request.files.get("image")
+    stored, storage_error = save_uploaded_file(
+        upload=upload,
+        folder=f"products/{product.id}",
+        allowed_extensions=IMAGE_EXTENSIONS,
+    )
+    if storage_error is not None:
+        return validation_error({storage_error.field: storage_error.message})
+
+    next_sort_order = 0
+    if product.images:
+        next_sort_order = max(image.sort_order for image in product.images) + 1
+
+    is_primary = not bool(product.images)
+    image = ProductImage(
+        product_id=product.id,
+        image_url=stored["url"],
+        alt_text=str(request.form.get("alt_text") or request.form.get("alt") or "").strip() or None,
+        is_primary=is_primary,
+        sort_order=next_sort_order,
+    )
+    db.session.add(image)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.media_uploaded",
+        entity_type="product",
+        entity_id=product.id,
+        metadata={"image_id": image.id, "is_primary": image.is_primary},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_media_asset(image)}), 201
+
+
+@admin_bp.delete("/media/<int:image_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_media_asset(image_id: int):
+    image = db.session.get(ProductImage, image_id)
+    if image is None:
+        return _not_found("Media asset not found.")
+
+    product_id = image.product_id
+    was_primary = image.is_primary
+    if image.image_url.startswith("/media/"):
+        delete_stored_file(image.image_url.removeprefix("/media/"))
+
+    db.session.delete(image)
+    db.session.flush()
+
+    if was_primary:
+        replacement = (
+            ProductImage.query.filter_by(product_id=product_id)
+            .order_by(ProductImage.sort_order.asc(), ProductImage.id.asc())
+            .first()
+        )
+        if replacement is not None:
+            replacement.is_primary = True
+
+    _add_audit_log(
+        action="admin.media_deleted",
+        entity_type="product",
+        entity_id=product_id,
+        metadata={"image_id": image_id},
+    )
+    db.session.commit()
+    return jsonify({"message": "Media asset deleted successfully."})
+
+
 @admin_bp.patch("/products/<int:product_id>/active")
 @role_required(UserRole.ADMIN.value)
 def update_product_active_state(product_id: int):
@@ -1003,6 +2532,67 @@ def list_orders():
     return jsonify({"items": [serialize_order(order, include_items=True) for order in orders]})
 
 
+@admin_bp.get("/orders/<int:order_id>")
+@role_required(UserRole.ADMIN.value)
+def get_order_detail(order_id: int):
+    order = db.session.get(Order, order_id)
+    if order is None:
+        return _not_found("Order not found.")
+    return jsonify({"item": serialize_order(order, include_items=True)})
+
+
+@admin_bp.patch("/orders/<int:order_id>")
+@role_required(UserRole.ADMIN.value)
+def update_order_detail(order_id: int):
+    payload = validate_admin_order_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    order = db.session.get(Order, order_id)
+    if order is None:
+        return _not_found("Order not found.")
+
+    if "status" in payload["provided_fields"]:
+        transition_error = transition_order(order, OrderStatus(payload["status"]))
+        if transition_error is not None:
+            return jsonify({"error": {"code": transition_error.code, "message": transition_error.message}}), 400
+
+    if "delivery_agent_id" in payload["provided_fields"]:
+        delivery_agent_id = payload["delivery_agent_id"]
+        if delivery_agent_id is None:
+            order.delivery_agent_id = None
+        else:
+            agent = db.session.get(DeliveryAgent, delivery_agent_id)
+            if agent is None or not agent.is_active:
+                return validation_error({"delivery_agent_id": "Selected delivery agent was not found."})
+            order.delivery_agent_id = agent.id
+
+    for field in ("delivery_status", "tracking_token", "notes"):
+        if field in payload["provided_fields"]:
+            setattr(order, field, payload[field])
+
+    _add_audit_log(
+        action="admin.order_updated",
+        entity_type="order",
+        entity_id=order.id,
+        metadata={
+            "order_number": order.order_number,
+            "status": order.status.value,
+            "delivery_status": order.delivery_status,
+            "delivery_agent_id": order.delivery_agent_id,
+        },
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_order(order, include_items=True)})
+
+
+@admin_bp.get("/delivery-agents")
+@role_required(UserRole.ADMIN.value)
+def list_delivery_agents():
+    agents = DeliveryAgent.query.order_by(DeliveryAgent.display_name.asc(), DeliveryAgent.id.asc()).all()
+    return jsonify({"items": [_serialize_delivery_agent_brief(agent) for agent in agents]})
+
+
 @admin_bp.get("/promo-codes")
 @role_required(UserRole.ADMIN.value)
 def list_promo_codes():
@@ -1017,6 +2607,334 @@ def list_promo_codes():
     """
     promo_codes = PromoCode.query.order_by(PromoCode.created_at.desc(), PromoCode.id.desc()).all()
     return jsonify({"items": [serialize_promo_code(promo_code) for promo_code in promo_codes]})
+
+
+@admin_bp.get("/vouchers")
+@role_required(UserRole.ADMIN.value)
+def list_vouchers():
+    vouchers = PromoCode.query.order_by(PromoCode.created_at.desc(), PromoCode.id.desc()).all()
+    return jsonify({"items": [_serialize_voucher(voucher) for voucher in vouchers]})
+
+
+@admin_bp.post("/vouchers")
+@role_required(UserRole.ADMIN.value)
+def create_voucher():
+    payload = validate_voucher_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    uniqueness_error = ensure_unique_promo_code(payload["code"])
+    if uniqueness_error:
+        return validation_error(uniqueness_error.details)
+
+    voucher = PromoCode(
+        name=payload["name"],
+        code=payload["code"],
+        usage=payload["usage"],
+        discount_type=PromoCodeType.FIXED,
+        discount_value=0,
+        minimum_order_amount=0,
+        is_active=True,
+        starts_at=payload["start_datetime"],
+        ends_at=payload["end_datetime"],
+    )
+    db.session.add(voucher)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.voucher_created",
+        entity_type="voucher",
+        entity_id=voucher.id,
+        metadata={"code": voucher.code, "usage": voucher.usage},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_voucher(voucher)}), 201
+
+
+@admin_bp.patch("/vouchers/<int:voucher_id>")
+@role_required(UserRole.ADMIN.value)
+def update_voucher_detail(voucher_id: int):
+    payload = validate_voucher_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    voucher = db.session.get(PromoCode, voucher_id)
+    if voucher is None:
+        return _not_found("Voucher not found.")
+
+    if "code" in payload["provided_fields"]:
+        duplicate = PromoCode.query.filter(PromoCode.code == payload["code"], PromoCode.id != voucher.id).first()
+        if duplicate is not None:
+            return validation_error({"code": "A voucher with that code already exists."})
+
+    field_map = {
+        "name": "name",
+        "code": "code",
+        "usage": "usage",
+        "start_datetime": "starts_at",
+        "end_datetime": "ends_at",
+    }
+    for payload_field, model_field in field_map.items():
+        if payload_field in payload["provided_fields"]:
+            setattr(voucher, model_field, payload[payload_field])
+
+    _add_audit_log(
+        action="admin.voucher_updated",
+        entity_type="voucher",
+        entity_id=voucher.id,
+        metadata={"code": voucher.code, "usage": voucher.usage},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_voucher(voucher)})
+
+
+@admin_bp.delete("/vouchers/<int:voucher_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_voucher_detail(voucher_id: int):
+    voucher = db.session.get(PromoCode, voucher_id)
+    if voucher is None:
+        return _not_found("Voucher not found.")
+
+    _add_audit_log(
+        action="admin.voucher_deleted",
+        entity_type="voucher",
+        entity_id=voucher.id,
+        metadata={"code": voucher.code},
+    )
+    db.session.delete(voucher)
+    db.session.commit()
+    return jsonify({"message": "Voucher deleted successfully."})
+
+
+@admin_bp.get("/vouchers/<int:voucher_id>/stats")
+@role_required(UserRole.ADMIN.value)
+def get_voucher_stats(voucher_id: int):
+    voucher = db.session.get(PromoCode, voucher_id)
+    if voucher is None:
+        return _not_found("Voucher not found.")
+    return jsonify({"item": _serialize_voucher(voucher)})
+
+
+@admin_bp.get("/vouchers/<int:voucher_id>/offers")
+@role_required(UserRole.ADMIN.value)
+def list_voucher_offers(voucher_id: int):
+    voucher = db.session.get(PromoCode, voucher_id)
+    if voucher is None:
+        return _not_found("Voucher not found.")
+    return jsonify({"items": [_serialize_offer(offer) for offer in voucher.offers]})
+
+
+@admin_bp.post("/vouchers/<int:voucher_id>/offers")
+@role_required(UserRole.ADMIN.value)
+def attach_voucher_offer(voucher_id: int):
+    payload = validate_voucher_offer_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    voucher = db.session.get(PromoCode, voucher_id)
+    if voucher is None:
+        return _not_found("Voucher not found.")
+
+    offer = db.session.get(Offer, payload["offer_id"])
+    if offer is None:
+        return validation_error({"offer_id": "Selected offer was not found."})
+
+    if all(existing.id != offer.id for existing in voucher.offers):
+        voucher.offers.append(offer)
+
+    _add_audit_log(
+        action="admin.voucher_offer_attached",
+        entity_type="voucher",
+        entity_id=voucher.id,
+        metadata={"code": voucher.code, "offer_id": offer.id},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_voucher(voucher)})
+
+
+@admin_bp.delete("/vouchers/<int:voucher_id>/offers")
+@role_required(UserRole.ADMIN.value)
+def detach_voucher_offer(voucher_id: int):
+    payload = validate_voucher_offer_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    voucher = db.session.get(PromoCode, voucher_id)
+    if voucher is None:
+        return _not_found("Voucher not found.")
+
+    offer = next((item for item in voucher.offers if item.id == payload["offer_id"]), None)
+    if offer is None:
+        return validation_error({"offer_id": "Selected offer is not linked to this voucher."})
+
+    voucher.offers.remove(offer)
+    _add_audit_log(
+        action="admin.voucher_offer_detached",
+        entity_type="voucher",
+        entity_id=voucher.id,
+        metadata={"code": voucher.code, "offer_id": offer.id},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_voucher(voucher)})
+
+
+@admin_bp.get("/ranges")
+@role_required(UserRole.ADMIN.value)
+def list_ranges():
+    ranges = ProductRange.query.order_by(ProductRange.created_at.desc(), ProductRange.id.desc()).all()
+    return jsonify({"items": [_serialize_range_item(item) for item in ranges]})
+
+
+@admin_bp.post("/ranges")
+@role_required(UserRole.ADMIN.value)
+def create_range():
+    payload = validate_range_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    existing = ProductRange.query.filter_by(slug=payload["slug"]).first()
+    if existing is not None:
+        return validation_error({"slug": "A range with that slug already exists."})
+
+    item = ProductRange(**payload)
+    db.session.add(item)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.range_created",
+        entity_type="range",
+        entity_id=item.id,
+        metadata={"slug": item.slug, "includes_all_products": item.includes_all_products},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_range_item(item)}), 201
+
+
+@admin_bp.patch("/ranges/<int:range_id>")
+@role_required(UserRole.ADMIN.value)
+def update_range_detail(range_id: int):
+    payload = validate_range_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    item = db.session.get(ProductRange, range_id)
+    if item is None:
+        return _not_found("Range not found.")
+
+    if "slug" in payload["provided_fields"]:
+        existing = ProductRange.query.filter(ProductRange.slug == payload["slug"], ProductRange.id != item.id).first()
+        if existing is not None:
+            return validation_error({"slug": "A range with that slug already exists."})
+
+    for field in ("name", "slug", "description", "is_public", "includes_all_products"):
+        if field in payload["provided_fields"]:
+            setattr(item, field, payload[field])
+
+    _add_audit_log(
+        action="admin.range_updated",
+        entity_type="range",
+        entity_id=item.id,
+        metadata={"slug": item.slug, "includes_all_products": item.includes_all_products},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_range_item(item)})
+
+
+@admin_bp.delete("/ranges/<int:range_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_range_detail(range_id: int):
+    item = db.session.get(ProductRange, range_id)
+    if item is None:
+        return _not_found("Range not found.")
+
+    for condition in OfferCondition.query.filter_by(range_id=item.id).all():
+        condition.range_id = None
+    for benefit in OfferBenefit.query.filter_by(range_id=item.id).all():
+        benefit.range_id = None
+
+    _add_audit_log(
+        action="admin.range_deleted",
+        entity_type="range",
+        entity_id=item.id,
+        metadata={"slug": item.slug},
+    )
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"message": "Range deleted successfully."})
+
+
+@admin_bp.get("/ranges/<int:range_id>/products")
+@role_required(UserRole.ADMIN.value)
+def list_range_products(range_id: int):
+    item = db.session.get(ProductRange, range_id)
+    if item is None:
+        return _not_found("Range not found.")
+
+    products = Product.query.order_by(Product.created_at.desc(), Product.id.desc()).all() if item.includes_all_products else item.products
+    return jsonify({"items": [_serialize_range_product(product) for product in products]})
+
+
+@admin_bp.post("/ranges/<int:range_id>/products")
+@role_required(UserRole.ADMIN.value)
+def add_range_product(range_id: int):
+    payload = validate_range_product_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    item = db.session.get(ProductRange, range_id)
+    if item is None:
+        return _not_found("Range not found.")
+
+    product = db.session.get(Product, payload["product_id"])
+    if product is None:
+        return validation_error({"product_id": "Selected product was not found."})
+
+    if all(existing.id != product.id for existing in item.products):
+        item.products.append(product)
+
+    _add_audit_log(
+        action="admin.range_product_added",
+        entity_type="range",
+        entity_id=item.id,
+        metadata={"slug": item.slug, "product_id": product.id},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_range_item(item)})
+
+
+@admin_bp.delete("/ranges/<int:range_id>/products")
+@role_required(UserRole.ADMIN.value)
+def remove_range_product(range_id: int):
+    raw_payload = get_json_payload()
+    if not raw_payload:
+        product_id_value = request.args.get("product_id") or request.form.get("product_id")
+        raw_payload = {"product_id": product_id_value} if product_id_value is not None else {}
+
+    payload = validate_range_product_payload(raw_payload)
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    item = db.session.get(ProductRange, range_id)
+    if item is None:
+        return _not_found("Range not found.")
+
+    product = next((existing for existing in item.products if existing.id == payload["product_id"]), None)
+    if product is None:
+        if item.includes_all_products:
+            return validation_error(
+                {
+                    "product_id": "This range includes all products automatically. Disable 'includes all products' or remove only explicitly assigned products."
+                }
+            )
+        return validation_error({"product_id": "Selected product is not assigned to this range."})
+
+    item.products.remove(product)
+    _add_audit_log(
+        action="admin.range_product_removed",
+        entity_type="range",
+        entity_id=item.id,
+        metadata={"slug": item.slug, "product_id": product.id},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_range_item(item)})
 
 
 @admin_bp.get("/audit-logs")

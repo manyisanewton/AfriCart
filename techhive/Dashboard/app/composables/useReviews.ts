@@ -21,6 +21,7 @@ export interface ReviewPayload {
 
 function readApiError(err: any) {
   return err?.data?.error?.detail
+    || err?.data?.error?.message
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
@@ -36,14 +37,21 @@ export function useReviews() {
     error.value = null
 
     try {
-      const result = await request<{ results: ReviewItem[], pagination: any }>('/admin/reviews/', {
+      const result = await request<{ items: ReviewItem[] }>('/admin/reviews', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: (result.items || []).length,
+            num_pages: 1,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -59,11 +67,11 @@ export function useReviews() {
     error.value = null
 
     try {
-      const result = await request<{ review: ReviewItem }>(`/admin/reviews/${id}/`, {
+      const result = await request<{ item: ReviewItem }>(`/admin/reviews/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.review }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -79,7 +87,7 @@ export function useReviews() {
     error.value = null
 
     try {
-      await request(`/admin/reviews/${id}/`, { method: 'DELETE' })
+      await request(`/admin/reviews/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {

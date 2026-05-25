@@ -15,15 +15,21 @@ from app.models.notification_delivery import (
     NotificationDeliveryStatus,
 )
 from app.models.notification_preference import NotificationPreference
+from app.models.offer import Offer, OfferBenefit, OfferCondition
 from app.models.order import Order, OrderStatus
 from app.models.order_item import OrderItem
 from app.models.payment import Payment, PaymentMethod, PaymentStatus
 from app.models.platform_setting import PlatformSetting
 from app.models.product import Product
+from app.models.product_attribute import ProductAttribute
 from app.models.product_image import ProductImage
+from app.models.product_option import ProductOption
+from app.models.product_range import ProductRange, product_range_products
+from app.models.product_stock_alert import ProductStockAlert
+from app.models.product_type import ProductType
 from app.models.product_view import ProductView
 from app.models.product_variant import ProductVariant
-from app.models.promo_code import PromoCode, PromoCodeType
+from app.models.promo_code import PromoCode, PromoCodeType, promo_code_offers
 from app.models.refund import Refund, RefundStatus
 from app.models.recommendation_event import RecommendationEvent
 from app.models.review import Review
@@ -51,6 +57,9 @@ __all__ = [
     "NotificationDeliveryStatus",
     "NotificationPreference",
     "NotificationType",
+    "Offer",
+    "OfferBenefit",
+    "OfferCondition",
     "Order",
     "OrderItem",
     "OrderStatus",
@@ -59,11 +68,18 @@ __all__ = [
     "PaymentStatus",
     "PlatformSetting",
     "Product",
+    "ProductAttribute",
     "ProductImage",
+    "ProductOption",
+    "ProductRange",
+    "ProductStockAlert",
+    "ProductType",
+    "product_range_products",
     "ProductView",
     "ProductVariant",
     "PromoCode",
     "PromoCodeType",
+    "promo_code_offers",
     "Refund",
     "RefundStatus",
     "RecommendationEvent",

@@ -17,12 +17,21 @@ def _iso_datetime(value) -> str | None:
 
 
 def serialize_category(category) -> dict:
+    depth = 1
+    parent = category.parent
+    while parent is not None:
+        depth += 1
+        parent = parent.parent
+
     return {
         "id": category.id,
+        "parent_id": category.parent_id,
         "name": category.name,
         "slug": category.slug,
         "description": category.description,
         "is_active": category.is_active,
+        "depth": depth,
+        "numchild": len(category.children or []),
     }
 
 
@@ -71,6 +80,7 @@ def serialize_product(product, include_related: bool = False) -> dict:
         "compare_at_price": _money(product.compare_at_price),
         "currency": product.currency,
         "stock_quantity": product.stock_quantity,
+        "low_stock_threshold": product.low_stock_threshold,
         "in_stock": product.in_stock,
         "is_active": product.is_active,
         "is_featured": product.is_featured,

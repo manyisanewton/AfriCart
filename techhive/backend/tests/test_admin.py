@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
 from app.services import payment_reconciliation_service as reconciliation_service
@@ -9,6 +10,7 @@ from app.models import (
     AuditLog,
     Brand,
     Category,
+    DeliveryAgent,
     NotificationDelivery,
     NotificationDeliveryStatus,
     Payment,
@@ -16,7 +18,17 @@ from app.models import (
     PaymentStatus,
     PlatformSetting,
     Product,
+    ProductAttribute,
+    Offer,
+    OfferBenefit,
+    OfferCondition,
+    ProductOption,
+    ProductRange,
+    ProductStockAlert,
+    PromoCode,
     RecommendationEvent,
+    Review,
+    ProductType,
     SupportTicket,
     SupportTicketStatus,
     User,
@@ -38,15 +50,15 @@ def create_admin_headers(client):
     )
 
 
-def create_customer_headers(client):
+def create_customer_headers(client, email="plain-user@example.com", phone="+254777000222"):
     response = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "plain-user@example.com",
+            "email": email,
             "password": "SecurePass123",
             "first_name": "Plain",
             "last_name": "User",
-            "phone_number": "+254777000222",
+            "phone_number": phone,
         },
     )
     token = response.get_json()["tokens"]["access_token"]
@@ -129,6 +141,41 @@ def create_order_fixture(client):
     return order_response.get_json()["item"]
 
 
+def create_address_for_user(email, recipient_name="Review User"):
+    user = User.query.filter_by(email=email).first()
+    address = Address(
+        user_id=user.id,
+        label="Home",
+        recipient_name=recipient_name,
+        phone_number=user.phone_number,
+        country="Kenya",
+        city="Nairobi",
+        address_line_1="Mama Ngina Street",
+        is_default=True,
+    )
+    db.session.add(address)
+    db.session.commit()
+    return address
+
+
+def complete_purchase_for_user(client, headers, user_email, product_id):
+    address = create_address_for_user(user_email)
+    cart_response = client.post(
+        "/api/v1/cart/items",
+        json={"product_id": product_id, "quantity": 1},
+        headers=headers,
+    )
+    assert cart_response.status_code == 201
+
+    order_response = client.post(
+        "/api/v1/orders",
+        json={"address_id": address.id},
+        headers=headers,
+    )
+    assert order_response.status_code == 201
+    return order_response.get_json()["item"]
+
+
 def test_non_admin_cannot_access_admin_users(client):
     headers = create_customer_headers(client)
 
@@ -145,6 +192,861 @@ def test_admin_can_list_users(client):
 
     assert response.status_code == 200
     assert len(response.get_json()["items"]) >= 2
+
+
+def test_admin_can_view_user_detail(client):
+    headers = create_admin_headers(client)
+    create_customer_headers(client, email="detail-user@example.com", phone="+254777001234")
+    user = User.query.filter_by(email="detail-user@example.com").first()
+    address = Address(
+        user_id=user.id,
+        label="Home",
+        recipient_name="Detail User",
+        phone_number=user.phone_number,
+        country="Kenya",
+        city="Nairobi",
+        address_line_1="Koinange Street",
+        is_default=True,
+    )
+    ticket = SupportTicket(
+        user_id=user.id,
+        name=user.full_name,
+        email=user.email,
+        subject="Delivery update",
+        message="Where is my order?",
+        status=SupportTicketStatus.OPEN,
+    )
+    db.session.add_all([address, ticket])
+    db.session.commit()
+
+    response = client.get(f"/api/v1/admin/users/{user.id}", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.get_json()["item"]
+    assert payload["email"] == user.email
+    assert payload["metrics"]["addresses"] == 1
+    assert payload["metrics"]["support_tickets"] == 1
+    assert payload["addresses"][0]["label"] == "Home"
+    assert payload["recent_support_tickets"][0]["label"] == "Delivery update"
+
+
+def test_admin_can_create_user(client):
+    headers = create_admin_headers(client)
+
+    response = client.post(
+        "/api/v1/admin/users",
+        json={
+            "email": "created-user@example.com",
+            "first_name": "Created",
+            "last_name": "User",
+            "phone_number": "+254777009999",
+            "role": "vendor",
+            "is_active": True,
+            "email_verified": True,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()["item"]
+    assert payload["email"] == "created-user@example.com"
+    assert payload["role"] == "vendor"
+    assert payload["email_verified"] is True
+    assert payload["must_change_password"] is True
+    assert response.get_json()["delivery"]["status"] in {"prepared", "sent", "failed"}
+    created = User.query.filter_by(email="created-user@example.com").first()
+    assert created is not None
+    assert created.must_change_password is True
+
+
+def test_temporary_password_user_must_change_password_before_access(client):
+    admin_headers = create_admin_headers(client)
+    create_response = client.post(
+        "/api/v1/admin/users",
+        json={
+            "email": "temp-user@example.com",
+            "first_name": "Temp",
+            "last_name": "User",
+            "role": "customer",
+            "is_active": True,
+        },
+        headers=admin_headers,
+    )
+    assert create_response.status_code == 201
+
+    created = User.query.filter_by(email="temp-user@example.com").first()
+    created.password_hash = hash_password("TempPass123!")
+    db.session.commit()
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "temp-user@example.com", "password": "TempPass123!"},
+    )
+    assert login_response.status_code == 200
+    access_token = login_response.get_json()["tokens"]["access_token"]
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    me_response = client.get("/api/v1/auth/me", headers=headers)
+    assert me_response.status_code == 200
+    assert me_response.get_json()["user"]["must_change_password"] is True
+
+    blocked_response = client.get("/api/v1/addresses", headers=headers)
+    assert blocked_response.status_code == 403
+
+    change_response = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "TempPass123!", "new_password": "BetterPass123!"},
+        headers=headers,
+    )
+    assert change_response.status_code == 200
+
+    refreshed_me = client.get("/api/v1/auth/me", headers=headers)
+    assert refreshed_me.status_code == 200
+    assert refreshed_me.get_json()["user"]["must_change_password"] is False
+
+
+def test_admin_can_create_product(client):
+    headers = create_admin_headers(client)
+    vendor_user, vendor = create_vendor_fixture()
+    category = Category(name="Admin Cameras", slug="admin-cameras")
+    brand = Brand(name="Canon", slug="canon")
+    db.session.add_all([category, brand])
+    db.session.commit()
+
+    response = client.post(
+        "/api/v1/admin/products",
+        json={
+            "vendor_id": vendor.id,
+            "category_id": category.id,
+            "brand_id": brand.id,
+            "name": "Canon EOS R50",
+            "slug": "canon-eos-r50",
+            "sku": "CANON-R50",
+            "price": 125000,
+            "stock_quantity": 6,
+            "currency": "KES",
+            "description": "Mirrorless test camera",
+            "is_active": True,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()["item"]
+    assert payload["name"] == "Canon EOS R50"
+    assert payload["vendor"]["id"] == vendor.id
+    assert Product.query.filter_by(slug="canon-eos-r50").first() is not None
+
+
+def test_admin_can_manage_product_types(client):
+    headers = create_admin_headers(client)
+
+    create_response = client.post(
+        "/api/v1/admin/product-types",
+        json={
+            "name": "Physical Goods",
+            "slug": "physical-goods",
+            "requires_shipping": True,
+            "track_stock": True,
+        },
+        headers=headers,
+    )
+
+    assert create_response.status_code == 201
+    product_type_id = create_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/product-types", headers=headers)
+    assert list_response.status_code == 200
+    assert len(list_response.get_json()["items"]) == 1
+
+    update_response = client.patch(
+        f"/api/v1/admin/product-types/{product_type_id}",
+        json={
+            "requires_shipping": False,
+            "track_stock": False,
+        },
+        headers=headers,
+    )
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["requires_shipping"] is False
+    assert update_response.get_json()["item"]["track_stock"] is False
+
+    delete_response = client.delete(f"/api/v1/admin/product-types/{product_type_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert db.session.get(ProductType, product_type_id) is None
+
+
+def test_admin_can_manage_product_attributes(client):
+    headers = create_admin_headers(client)
+    product_type_response = client.post(
+        "/api/v1/admin/product-types",
+        json={
+            "name": "Physical Goods",
+            "slug": "physical-goods",
+            "requires_shipping": True,
+            "track_stock": True,
+        },
+        headers=headers,
+    )
+    product_type_id = product_type_response.get_json()["item"]["id"]
+
+    create_response = client.post(
+        "/api/v1/admin/attributes",
+        json={
+            "product_type_id": product_type_id,
+            "name": "Color",
+            "code": "color",
+            "type": "text",
+            "required": True,
+        },
+        headers=headers,
+    )
+
+    assert create_response.status_code == 201
+    attribute_id = create_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/attributes", headers=headers)
+    assert list_response.status_code == 200
+    assert len(list_response.get_json()["items"]) == 1
+
+    update_response = client.patch(
+        f"/api/v1/admin/attributes/{attribute_id}",
+        json={
+            "type": "option",
+            "required": False,
+        },
+        headers=headers,
+    )
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["type"] == "option"
+    assert update_response.get_json()["item"]["required"] is False
+
+    delete_response = client.delete(f"/api/v1/admin/attributes/{attribute_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert db.session.get(ProductAttribute, attribute_id) is None
+
+
+def test_admin_can_manage_product_options(client):
+    headers = create_admin_headers(client)
+
+    create_response = client.post(
+        "/api/v1/admin/options",
+        headers=headers,
+        json={
+            "name": "Gift message",
+            "code": "gift_message",
+            "type": "text",
+            "required": False,
+            "help_text": "Optional note for the package.",
+            "order": 1,
+        },
+    )
+    assert create_response.status_code == 201
+    option_id = create_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/options", headers=headers)
+    assert list_response.status_code == 200
+    assert any(item["id"] == option_id for item in list_response.get_json()["items"])
+
+    update_response = client.patch(
+        f"/api/v1/admin/options/{option_id}",
+        headers=headers,
+        json={
+            "required": True,
+            "help_text": "Required for custom packaging.",
+            "order": 2,
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.get_json()["item"]
+    assert updated["required"] is True
+    assert updated["help_text"] == "Required for custom packaging."
+    assert updated["order"] == 2
+
+    delete_response = client.delete(f"/api/v1/admin/options/{option_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert db.session.get(ProductOption, option_id) is None
+
+
+def test_admin_can_manage_offers_foundation(client):
+    headers = create_admin_headers(client)
+
+    condition_response = client.post(
+        "/api/v1/admin/offers/conditions",
+        headers=headers,
+        json={
+            "type": "value",
+            "value": "1500",
+            "proxy_class": "ValueCondition",
+        },
+    )
+    assert condition_response.status_code == 201
+    condition_id = condition_response.get_json()["item"]["id"]
+
+    benefit_response = client.post(
+        "/api/v1/admin/offers/benefits",
+        headers=headers,
+        json={
+            "type": "percentage",
+            "value": "10",
+            "proxy_class": "PercentageBenefit",
+            "max_affected_items": 2,
+        },
+    )
+    assert benefit_response.status_code == 201
+    benefit_id = benefit_response.get_json()["item"]["id"]
+
+    meta_response = client.get("/api/v1/admin/offers/meta", headers=headers)
+    assert meta_response.status_code == 200
+    assert meta_response.get_json()["offer_types"]
+
+    create_offer_response = client.post(
+        "/api/v1/admin/offers",
+        headers=headers,
+        json={
+            "name": "Weekend Laptop Offer",
+            "slug": "weekend-laptop-offer",
+            "description": "10 percent off qualifying laptops.",
+            "offer_type": "site",
+            "exclusive": True,
+            "status": "Open",
+            "priority": 10,
+            "condition_id": condition_id,
+            "benefit_id": benefit_id,
+        },
+    )
+    assert create_offer_response.status_code == 201
+    offer_id = create_offer_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/offers", headers=headers)
+    assert list_response.status_code == 200
+    assert any(item["id"] == offer_id for item in list_response.get_json()["items"])
+
+    update_offer_response = client.patch(
+        f"/api/v1/admin/offers/{offer_id}",
+        headers=headers,
+        json={
+            "priority": 12,
+            "description": "Updated seasonal laptop offer.",
+        },
+    )
+    assert update_offer_response.status_code == 200
+    assert update_offer_response.get_json()["item"]["priority"] == 12
+
+    status_response = client.patch(
+        f"/api/v1/admin/offers/{offer_id}/status",
+        headers=headers,
+        json={"status": "Suspended"},
+    )
+    assert status_response.status_code == 200
+    assert status_response.get_json()["item"]["status"] == "Suspended"
+
+    update_condition_response = client.patch(
+        f"/api/v1/admin/offers/conditions/{condition_id}",
+        headers=headers,
+        json={"value": "2000"},
+    )
+    assert update_condition_response.status_code == 200
+    assert update_condition_response.get_json()["item"]["value"] == "2000"
+
+    update_benefit_response = client.patch(
+        f"/api/v1/admin/offers/benefits/{benefit_id}",
+        headers=headers,
+        json={"max_affected_items": 3},
+    )
+    assert update_benefit_response.status_code == 200
+    assert update_benefit_response.get_json()["item"]["max_affected_items"] == 3
+
+    delete_offer_response = client.delete(f"/api/v1/admin/offers/{offer_id}", headers=headers)
+    assert delete_offer_response.status_code == 200
+    assert db.session.get(Offer, offer_id) is None
+
+    delete_condition_response = client.delete(f"/api/v1/admin/offers/conditions/{condition_id}", headers=headers)
+    assert delete_condition_response.status_code == 200
+    assert db.session.get(OfferCondition, condition_id) is None
+
+    delete_benefit_response = client.delete(f"/api/v1/admin/offers/benefits/{benefit_id}", headers=headers)
+    assert delete_benefit_response.status_code == 200
+    assert db.session.get(OfferBenefit, benefit_id) is None
+
+
+def test_admin_can_manage_vouchers(client):
+    headers = create_admin_headers(client)
+
+    condition_response = client.post(
+        "/api/v1/admin/offers/conditions",
+        headers=headers,
+        json={
+            "type": "value",
+            "value": "1000",
+            "proxy_class": "ValueCondition",
+        },
+    )
+    assert condition_response.status_code == 201
+    condition_id = condition_response.get_json()["item"]["id"]
+
+    benefit_response = client.post(
+        "/api/v1/admin/offers/benefits",
+        headers=headers,
+        json={
+            "type": "percentage",
+            "value": "5",
+            "proxy_class": "PercentageBenefit",
+        },
+    )
+    assert benefit_response.status_code == 201
+    benefit_id = benefit_response.get_json()["item"]["id"]
+
+    offer_response = client.post(
+        "/api/v1/admin/offers",
+        headers=headers,
+        json={
+            "name": "Voucher Offer",
+            "slug": "voucher-offer",
+            "offer_type": "voucher",
+            "status": "Open",
+            "condition_id": condition_id,
+            "benefit_id": benefit_id,
+        },
+    )
+    assert offer_response.status_code == 201
+    offer_id = offer_response.get_json()["item"]["id"]
+
+    create_response = client.post(
+        "/api/v1/admin/vouchers",
+        headers=headers,
+        json={
+            "name": "Launch Voucher",
+            "code": "LAUNCH100",
+            "usage": "Single use",
+            "start_datetime": "2026-05-24T10:00:00",
+            "end_datetime": "2026-06-24T10:00:00",
+        },
+    )
+    assert create_response.status_code == 201
+    voucher_id = create_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/vouchers", headers=headers)
+    assert list_response.status_code == 200
+    assert any(item["id"] == voucher_id for item in list_response.get_json()["items"])
+
+    update_response = client.patch(
+        f"/api/v1/admin/vouchers/{voucher_id}",
+        headers=headers,
+        json={"usage": "Multi-use"},
+    )
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["usage"] == "Multi-use"
+
+    attach_response = client.post(
+        f"/api/v1/admin/vouchers/{voucher_id}/offers",
+        headers=headers,
+        json={"offer_id": offer_id},
+    )
+    assert attach_response.status_code == 200
+    assert len(attach_response.get_json()["item"]["offers"]) == 1
+
+    stats_response = client.get(f"/api/v1/admin/vouchers/{voucher_id}/stats", headers=headers)
+    assert stats_response.status_code == 200
+    assert stats_response.get_json()["item"]["id"] == voucher_id
+
+    offers_response = client.get(f"/api/v1/admin/vouchers/{voucher_id}/offers", headers=headers)
+    assert offers_response.status_code == 200
+    assert offers_response.get_json()["items"][0]["id"] == offer_id
+
+    detach_response = client.delete(
+        f"/api/v1/admin/vouchers/{voucher_id}/offers",
+        headers=headers,
+        json={"offer_id": offer_id},
+    )
+    assert detach_response.status_code == 200
+    assert detach_response.get_json()["item"]["offers"] == []
+
+    delete_response = client.delete(f"/api/v1/admin/vouchers/{voucher_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert db.session.get(PromoCode, voucher_id) is None
+
+
+def test_admin_can_manage_ranges(client):
+    headers = create_admin_headers(client)
+    _, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+
+    create_response = client.post(
+        "/api/v1/admin/ranges",
+        headers=headers,
+        json={
+            "name": "Featured Audio",
+            "slug": "featured-audio",
+            "description": "Merchandising range for featured audio products.",
+            "is_public": True,
+            "includes_all_products": False,
+        },
+    )
+    assert create_response.status_code == 201
+    range_id = create_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/ranges", headers=headers)
+    assert list_response.status_code == 200
+    assert any(item["id"] == range_id for item in list_response.get_json()["items"])
+
+    update_response = client.patch(
+        f"/api/v1/admin/ranges/{range_id}",
+        headers=headers,
+        json={"includes_all_products": True},
+    )
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["includes_all_products"] is True
+
+    add_product_response = client.post(
+        f"/api/v1/admin/ranges/{range_id}/products",
+        headers=headers,
+        json={"product_id": product.id},
+    )
+    assert add_product_response.status_code == 200
+
+    products_response = client.get(f"/api/v1/admin/ranges/{range_id}/products", headers=headers)
+    assert products_response.status_code == 200
+    assert any(item["id"] == product.id for item in products_response.get_json()["items"])
+
+    remove_product_response = client.delete(
+        f"/api/v1/admin/ranges/{range_id}/products",
+        headers=headers,
+        json={"product_id": product.id},
+    )
+    assert remove_product_response.status_code == 200
+
+    delete_response = client.delete(f"/api/v1/admin/ranges/{range_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert db.session.get(ProductRange, range_id) is None
+
+
+def test_admin_can_update_order_operations_fields(client):
+    headers = create_admin_headers(client)
+    customer_headers = create_customer_headers(client, email="ops-order@example.com", phone="+254777001234")
+    _, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+    customer = User.query.filter_by(email="ops-order@example.com").first()
+    address = Address(
+        user_id=customer.id,
+        label="Home",
+        recipient_name="Ops User",
+        phone_number="+254777001234",
+        country="Kenya",
+        city="Nairobi",
+        address_line_1="Kimathi Street",
+        is_default=True,
+    )
+    db.session.add(address)
+
+    agent_user = User(
+        email="ops-agent@example.com",
+        password_hash=hash_password("SecurePass123"),
+        first_name="Ops",
+        last_name="Agent",
+        phone_number="+254700300400",
+        role=UserRole.DELIVERY_AGENT,
+    )
+    agent = DeliveryAgent(
+        user=agent_user,
+        display_name="Ops Agent",
+        phone_number="+254700300400",
+        is_active=True,
+    )
+    db.session.add_all([agent_user, agent])
+    db.session.commit()
+
+    cart_response = client.post(
+        "/api/v1/cart/items",
+        headers=customer_headers,
+        json={"product_id": product.id, "quantity": 1},
+    )
+    assert cart_response.status_code == 201
+
+    order_response = client.post(
+        "/api/v1/orders",
+        headers=customer_headers,
+        json={"address_id": address.id, "notes": "Leave at reception."},
+    )
+    assert order_response.status_code == 201
+    order_id = order_response.get_json()["item"]["id"]
+
+    agents_response = client.get("/api/v1/admin/delivery-agents", headers=headers)
+    assert agents_response.status_code == 200
+    assert any(item["id"] == agent.id for item in agents_response.get_json()["items"])
+
+    detail_response = client.get(f"/api/v1/admin/orders/{order_id}", headers=headers)
+    assert detail_response.status_code == 200
+
+    update_response = client.patch(
+        f"/api/v1/admin/orders/{order_id}",
+        headers=headers,
+        json={
+            "status": "confirmed",
+            "delivery_status": "assigned",
+            "tracking_token": "OPS-TRACK-001",
+            "notes": "Packed and ready for dispatch.",
+            "delivery_agent_id": agent.id,
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.get_json()["item"]
+    assert updated["status"] == "confirmed"
+    assert updated["delivery_status"] == "assigned"
+    assert updated["tracking_token"] == "OPS-TRACK-001"
+    assert updated["notes"] == "Packed and ready for dispatch."
+    assert updated["delivery_agent"]["id"] == agent.id
+
+
+def test_admin_can_view_campaign_summary(client):
+    headers = create_admin_headers(client)
+    _, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+
+    range_response = client.post(
+        "/api/v1/admin/ranges",
+        headers=headers,
+        json={
+            "name": "Campaign Range",
+            "slug": "campaign-range",
+            "description": "Range for campaign opportunities.",
+            "is_public": True,
+            "includes_all_products": False,
+        },
+    )
+    assert range_response.status_code == 201
+
+    condition_response = client.post(
+        "/api/v1/admin/offers/conditions",
+        headers=headers,
+        json={"type": "value", "value": "1000"},
+    )
+    assert condition_response.status_code == 201
+    condition_id = condition_response.get_json()["item"]["id"]
+
+    benefit_response = client.post(
+        "/api/v1/admin/offers/benefits",
+        headers=headers,
+        json={"type": "percentage", "value": "10"},
+    )
+    assert benefit_response.status_code == 201
+    benefit_id = benefit_response.get_json()["item"]["id"]
+
+    offer_response = client.post(
+        "/api/v1/admin/offers",
+        headers=headers,
+        json={
+            "name": "Campaign Offer",
+            "slug": "campaign-offer",
+            "offer_type": "site",
+            "status": "Open",
+            "condition_id": condition_id,
+            "benefit_id": benefit_id,
+        },
+    )
+    assert offer_response.status_code == 201
+
+    voucher_response = client.post(
+        "/api/v1/admin/vouchers",
+        headers=headers,
+        json={
+            "name": "Campaign Voucher",
+            "code": "CAMPAIGN10",
+            "usage": "Single use",
+            "start_datetime": "2026-05-24T10:00:00",
+            "end_datetime": "2026-06-24T10:00:00",
+        },
+    )
+    assert voucher_response.status_code == 201
+
+    summary_response = client.get("/api/v1/admin/campaigns?days=30", headers=headers)
+    assert summary_response.status_code == 200
+    payload = summary_response.get_json()
+    assert payload["range"]["days"] == 30
+    assert "kpis" in payload
+    assert "campaigns" in payload
+    assert "product_opportunities" in payload
+    assert any(item["name"] == "Campaign Offer" for item in payload["campaigns"])
+    assert any(item["name"] == product.name for item in payload["product_opportunities"])
+
+
+def test_admin_can_list_and_update_stock_alerts(client):
+    headers = create_admin_headers(client)
+    _, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+    product.stock_quantity = 2
+    db.session.commit()
+
+    list_response = client.get("/api/v1/admin/stock-alerts", headers=headers)
+    assert list_response.status_code == 200
+    items = list_response.get_json()["items"]
+    assert items
+    alert = next(item for item in items if item["stockrecord"]["product_id"] == product.id)
+    assert alert["status"] == "open"
+    assert alert["threshold"] == 5
+
+    update_response = client.patch(
+        f"/api/v1/admin/stock-alerts/{alert['id']}",
+        headers=headers,
+        json={"status": "closed"},
+    )
+    assert update_response.status_code == 200
+    updated = update_response.get_json()["item"]
+    assert updated["status"] == "closed"
+    assert updated["date_closed"] is not None
+    persisted = db.session.get(ProductStockAlert, alert["id"])
+    assert persisted is not None
+    assert persisted.status == "closed"
+
+
+def test_admin_can_create_and_update_product_with_low_stock_threshold(client):
+    headers = create_admin_headers(client)
+    _, vendor = create_vendor_fixture()
+    category = Category(name="Threshold Category", slug="threshold-category")
+    brand = Brand(name="Threshold Brand", slug="threshold-brand")
+    db.session.add_all([category, brand])
+    db.session.commit()
+
+    create_response = client.post(
+        "/api/v1/admin/products",
+        headers=headers,
+        json={
+            "vendor_id": vendor.id,
+            "category_id": category.id,
+            "brand_id": brand.id,
+            "name": "Threshold Product",
+            "slug": "threshold-product",
+            "sku": "THRESHOLD-001",
+            "price": 1000,
+            "currency": "KES",
+            "stock_quantity": 7,
+            "low_stock_threshold": 3,
+            "is_active": True,
+            "is_featured": False,
+        },
+    )
+    assert create_response.status_code == 201
+    product_id = create_response.get_json()["item"]["id"]
+    assert create_response.get_json()["item"]["low_stock_threshold"] == 3
+
+    update_response = client.patch(
+        f"/api/v1/admin/products/{product_id}",
+        headers=headers,
+        json={"low_stock_threshold": 2},
+    )
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["low_stock_threshold"] == 2
+
+    product = db.session.get(Product, product_id)
+    assert product is not None
+    assert product.low_stock_threshold == 2
+
+
+def test_stock_alerts_use_product_specific_threshold(client):
+    headers = create_admin_headers(client)
+    _, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+    product.stock_quantity = 4
+    product.low_stock_threshold = 3
+    db.session.commit()
+
+    list_response = client.get("/api/v1/admin/stock-alerts", headers=headers)
+    assert list_response.status_code == 200
+    items = list_response.get_json()["items"]
+    assert all(item["stockrecord"]["product_id"] != product.id for item in items)
+
+    product.stock_quantity = 3
+    db.session.commit()
+
+    list_response = client.get("/api/v1/admin/stock-alerts", headers=headers)
+    assert list_response.status_code == 200
+    items = list_response.get_json()["items"]
+    alert = next(item for item in items if item["stockrecord"]["product_id"] == product.id)
+    assert alert["threshold"] == 3
+
+
+def test_admin_can_moderate_reviews(client):
+    headers = create_admin_headers(client)
+    customer_headers = create_customer_headers(client, email="admin-reviewer@example.com", phone="+254788009999")
+    _, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+    complete_purchase_for_user(client, customer_headers, "admin-reviewer@example.com", product.id)
+    create_response = client.post(
+        "/api/v1/reviews",
+        json={
+            "product_id": product.id,
+            "rating": 4,
+            "title": "Good monitor",
+            "comment": "Solid panel and decent colors.",
+        },
+        headers=customer_headers,
+    )
+    assert create_response.status_code == 201
+    review_id = create_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/reviews", headers=headers)
+    assert list_response.status_code == 200
+    items = list_response.get_json()["items"]
+    review = next(item for item in items if item["id"] == review_id)
+    assert review["status"] == Review.STATUS_MODERATION
+
+    update_response = client.patch(
+        f"/api/v1/admin/reviews/{review_id}",
+        headers=headers,
+        json={
+            "status": Review.STATUS_APPROVED,
+            "title": "Excellent monitor",
+            "body": "Excellent contrast and colors.",
+            "score": 5,
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.get_json()["item"]
+    assert updated["status"] == Review.STATUS_APPROVED
+    assert updated["title"] == "Excellent monitor"
+    assert updated["body"] == "Excellent contrast and colors."
+    assert updated["score"] == 5
+
+    delete_response = client.delete(f"/api/v1/admin/reviews/{review_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert db.session.get(Review, review_id) is None
+
+
+def test_admin_can_manage_media_library(client):
+    headers = create_admin_headers(client)
+    vendor_user, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+
+    upload_response = client.post(
+        "/api/v1/admin/media",
+        data={
+            "product_id": str(product.id),
+            "alt": "Front product shot",
+            "image": (BytesIO(b"fake-image-bytes"), "product-shot.png"),
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+
+    assert upload_response.status_code == 201
+    upload_payload = upload_response.get_json()["item"]
+    assert upload_payload["product_id"] == product.id
+    assert upload_payload["url"].startswith("/media/products/")
+
+    list_response = client.get("/api/v1/admin/media", headers=headers)
+
+    assert list_response.status_code == 200
+    list_payload = list_response.get_json()
+    assert list_payload["summary"]["total"] == 1
+    assert list_payload["summary"]["matching"] == 1
+    assert list_payload["items"][0]["id"] == upload_payload["id"]
+
+    delete_response = client.delete(f"/api/v1/admin/media/{upload_payload['id']}", headers=headers)
+
+    assert delete_response.status_code == 200
+    refreshed_product = db.session.get(Product, product.id)
+    assert refreshed_product is not None
+    assert len(refreshed_product.images) == 0
 
 
 def test_admin_can_manage_recommendation_settings(client):
@@ -621,6 +1523,54 @@ def test_admin_can_update_and_delete_category(client):
     assert delete_response.status_code == 200
 
 
+def test_admin_can_create_child_category(client):
+    headers = create_admin_headers(client)
+    parent_response = client.post(
+        "/api/v1/admin/categories",
+        json={"name": "Electronics", "slug": "electronics"},
+        headers=headers,
+    )
+    parent_id = parent_response.get_json()["item"]["id"]
+
+    child_response = client.post(
+        "/api/v1/admin/categories",
+        json={"name": "Speakers", "slug": "speakers", "parent_id": parent_id},
+        headers=headers,
+    )
+
+    assert child_response.status_code == 201
+    payload = child_response.get_json()["item"]
+    assert payload["parent_id"] == parent_id
+    assert payload["depth"] == 2
+
+
+def test_admin_can_move_category_under_parent(client):
+    headers = create_admin_headers(client)
+    root_response = client.post(
+        "/api/v1/admin/categories",
+        json={"name": "Electronics", "slug": "electronics"},
+        headers=headers,
+    )
+    child_response = client.post(
+        "/api/v1/admin/categories",
+        json={"name": "Audio", "slug": "audio"},
+        headers=headers,
+    )
+    root_id = root_response.get_json()["item"]["id"]
+    child_id = child_response.get_json()["item"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/admin/categories/{child_id}",
+        json={"parent_id": root_id},
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    payload = update_response.get_json()["item"]
+    assert payload["parent_id"] == root_id
+    assert payload["depth"] == 2
+
+
 def test_admin_cannot_delete_category_with_products(client):
     headers = create_admin_headers(client)
     _vendor_user, vendor = create_vendor_fixture()
@@ -634,6 +1584,28 @@ def test_admin_cannot_delete_category_with_products(client):
     assert response.status_code == 400
     assert response.get_json()["error"]["details"]["category"] == (
         "Categories with products cannot be deleted."
+    )
+
+
+def test_admin_cannot_delete_category_with_children(client):
+    headers = create_admin_headers(client)
+    parent_response = client.post(
+        "/api/v1/admin/categories",
+        json={"name": "Electronics", "slug": "electronics"},
+        headers=headers,
+    )
+    parent_id = parent_response.get_json()["item"]["id"]
+    client.post(
+        "/api/v1/admin/categories",
+        json={"name": "Speakers", "slug": "speakers", "parent_id": parent_id},
+        headers=headers,
+    )
+
+    response = client.delete(f"/api/v1/admin/categories/{parent_id}", headers=headers)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["details"]["category"] == (
+        "Categories with child categories cannot be deleted."
     )
 
 

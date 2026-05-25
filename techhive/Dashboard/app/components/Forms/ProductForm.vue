@@ -6,6 +6,8 @@ const props = defineProps<{
   values?: Partial<ProductFormSchema>;
   statusOptions: { label: string; value: string; icon: string; color: string }[];
   categories: { label: string; value: string }[];
+  brands?: { label: string; value: string }[];
+  vendors?: { label: string; value: string }[];
 }>();
 
 const emit = defineEmits<{
@@ -38,6 +40,15 @@ const productSchema = z.object({
     })
     .int("Stock quantity must be an integer")
     .min(0, "Stock must be at least 0"),
+  lowStockThreshold: z
+    .number({
+      error: (issue) =>
+        issue.input === undefined
+          ? "Low stock threshold is required"
+          : "low stock threshold is not a number",
+    })
+    .int("Low stock threshold must be an integer")
+    .min(0, "Low stock threshold must be at least 0"),
   weight: z
     .number({
       error: (issue) =>
@@ -58,6 +69,7 @@ const productSchema = z.object({
     .string()
     .optional()
     .default(""),
+  vendor: z.string().optional().default(""),
   brand: z.string().optional(),
   tags: z.string().optional(),
 });
@@ -74,10 +86,12 @@ const localFormState = reactive<ProductFormSchema>({
   chargeTax: true,
   sku: "",
   stock: 0,
+  lowStockThreshold: 5,
   weight: null,
   dimensions: "",
   status: "draft",
   category: "",
+  vendor: "",
   brand: "",
   tags: "",
   ...props.values,
@@ -97,10 +111,12 @@ watch(
       chargeTax: true,
       sku: "",
       stock: 0,
+      lowStockThreshold: 5,
       weight: null,
       dimensions: "",
       status: "draft",
       category: "",
+      vendor: "",
       brand: "",
       tags: "",
       ...values,
@@ -177,23 +193,33 @@ function onSubmit(e: FormSubmitEvent<ProductFormSchema>) {
                 </h3>
               </template>
               <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <UFormField label="Vendor" name="vendor">
+                  <USelect
+                    v-model="localFormState.vendor"
+                    :items="vendors || []"
+                    value-attribute="value"
+                    option-attribute="label"
+                    size="lg"
+                    class="w-full"
+                    placeholder="Select vendor"
+                  />
+                </UFormField>
                 <UFormField label="Category" name="category">
                   <USelect
                     v-model="localFormState.category"
-                    :items="[{ label: 'Uncategorized', value: '__uncategorized__' }, ...categories]"
+                    :items="categories"
                     value-attribute="value"
                     option-attribute="label"
                     size="lg"
                     class="w-full"
                   />
-                  <p v-if="!categories.length" class="mt-2 text-xs text-amber-600">
-                    Category management is waiting for the backend admin category API. You can still save the product without a category.
-                  </p>
                 </UFormField>
                 <UFormField label="Brand" name="brand">
-                  <UInput
+                  <USelect
                     v-model="localFormState.brand"
-                    placeholder="e.g. Hidrotek"
+                    :items="brands || []"
+                    value-attribute="value"
+                    option-attribute="label"
                     size="lg"
                     class="w-full"
                   />
@@ -283,6 +309,16 @@ function onSubmit(e: FormSubmitEvent<ProductFormSchema>) {
                     v-model.number="localFormState.stock"
                     type="number"
                     placeholder="0"
+                    size="lg"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField label="Low Stock Threshold" name="lowStockThreshold" required>
+                  <UInput
+                    v-model.number="localFormState.lowStockThreshold"
+                    type="number"
+                    min="0"
+                    placeholder="5"
                     size="lg"
                     class="w-full"
                   />

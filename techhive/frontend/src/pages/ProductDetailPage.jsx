@@ -5,9 +5,6 @@ import Zoom from "react-medium-image-zoom";
 import "react-medium-image-zoom/dist/styles.css";
 import "../styles/productDetail.css";
 
-const FALLBACK_IMAGE = "https://placehold.co/400x400?text=No+Image";
-
-
 export default function ProductDetailPage({ addToCart }) {
   const { slug } = useParams();
 
@@ -26,25 +23,8 @@ export default function ProductDetailPage({ addToCart }) {
 
       const res = await productAPI.getProduct(slug);
       const data = res.data.item;
-
-      //  Normalize everything
-      const images =
-        data.images && data.images.length > 0
-          ? data.images
-          : [data.primary_image || FALLBACK_IMAGE]
-      const normalized = {
-        ...data,
-        price: Number(data.price),
-        compare_at_price: data.compare_at_price
-          ? Number(data.compare_at_price)
-          : null,
-        category: data.category?.name || "N/A",
-        brand: data.brand?.name || "N/A",
-        images,
-      };
-
-      setProduct(normalized);
-      setSelectedImage(images[0]);
+      setProduct(data);
+      setSelectedImage(data.images?.[0] || data.primary_image);
 
     } catch (err) {
       console.error("PRODUCT FETCH ERROR:", err);
@@ -65,7 +45,7 @@ export default function ProductDetailPage({ addToCart }) {
         <div className="main-image">
           <Zoom>
             <img
-              src={selectedImage || FALLBACK_IMAGE }
+              src={selectedImage || product.primary_image}
               alt={product.name}
             />
           </Zoom>
@@ -75,7 +55,7 @@ export default function ProductDetailPage({ addToCart }) {
           {product.images.map((img, index) => (
             <img
               key={index}
-              src={img || FALLBACK_IMAGE}
+              src={img}
               alt="thumb"
               className={img === selectedImage ? "active" : ""}
               onClick={() => setSelectedImage(img)}
@@ -156,12 +136,12 @@ export default function ProductDetailPage({ addToCart }) {
 
           <div className="meta-item">
             <span className="meta-label">Category:</span>
-            <span className="meta-value">{product.category}</span>
+            <span className="meta-value">{product.category_name || "N/A"}</span>
           </div>
 
           <div className="meta-item">
             <span className="meta-label">Brand:</span>
-            <span className="meta-value">{product.brand}</span>
+            <span className="meta-value">{product.brand_name || "N/A"}</span>
           </div>
         </div>
       </div>

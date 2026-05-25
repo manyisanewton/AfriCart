@@ -3,8 +3,6 @@ import { Link } from "react-router-dom";
 import { productAPI } from "../../services/api";
 import "../../styles/trendingProducts.css";
 
-const FALLBACK_IMAGE = "https://placehold.co/400x400?text=No+Image";
-
 export default function TrendingProducts() {
   const [allProducts, setAllProducts] = useState([]);
   const [products, setProducts] = useState([]);
@@ -82,7 +80,7 @@ export default function TrendingProducts() {
             <div key={p.id} className="product-card">
               <div className="product-image-wrap">
                 <img
-                  src={p.primary_image || FALLBACK_IMAGE}
+                  src={p.primary_image}
                   alt={p.name}
                 />
               </div>

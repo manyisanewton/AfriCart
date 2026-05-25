@@ -10,6 +10,70 @@ export interface AdminUserItem {
   email_verified: boolean
 }
 
+export interface AdminUserAddress {
+  id: number
+  label: string
+  recipient_name: string
+  phone_number: string
+  country: string
+  city: string
+  state_or_county: string | null
+  postal_code: string | null
+  address_line_1: string
+  address_line_2: string | null
+  is_default: boolean
+}
+
+export interface AdminUserActivityItem {
+  id: number
+  label: string
+  status: string | null
+  created_at: string | null
+}
+
+export interface AdminUserProfile {
+  id: number
+  business_name?: string
+  slug?: string
+  phone_number?: string
+  support_email?: string
+  status?: string
+  is_verified?: boolean
+  display_name?: string
+  is_active?: boolean
+  created_at?: string | null
+}
+
+export interface AdminUserDetail extends AdminUserItem {
+  first_name: string
+  last_name: string
+  created_at?: string | null
+  updated_at?: string | null
+  metrics: {
+    orders: number
+    reviews: number
+    support_tickets: number
+    addresses: number
+    wishlist_items: number
+  }
+  addresses: AdminUserAddress[]
+  vendor_profile: AdminUserProfile | null
+  delivery_agent_profile: AdminUserProfile | null
+  recent_orders: AdminUserActivityItem[]
+  recent_support_tickets: AdminUserActivityItem[]
+  recent_reviews: AdminUserActivityItem[]
+}
+
+export interface AdminUserCreatePayload {
+  email: string
+  first_name: string
+  last_name: string
+  phone_number?: string | null
+  role: 'admin' | 'vendor' | 'customer' | 'delivery_agent'
+  is_active?: boolean
+  email_verified?: boolean
+}
+
 function extractApiError(err: any) {
   const detail = err?.data?.error?.message || err?.data?.detail || err?.message
   const errors = err?.data?.error?.errors || err?.data
@@ -58,6 +122,7 @@ function mapUserToRow(user: AdminUserItem): UserTableRow {
     emailVerified: user.email_verified,
     roleValue: user.role,
     isActive: user.is_active,
+    detail: null,
     raw: user,
   }
 }
@@ -81,6 +146,25 @@ export function useUser() {
           raw: result.items || [],
         },
       }
+    }
+    catch (err: any) {
+      error.value = extractApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function createUser(payload: AdminUserCreatePayload) {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await request<{ item: AdminUserDetail }>('/admin/users', {
+        method: 'POST',
+        body: payload,
+      })
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = extractApiError(err)
@@ -129,8 +213,28 @@ export function useUser() {
     }
   }
 
+  async function getUser(userId: number | string) {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await request<{ item: AdminUserDetail }>(`/admin/users/${userId}`, {
+        method: 'GET',
+      })
+      return { success: true, data: result.item }
+    }
+    catch (err: any) {
+      error.value = extractApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
   return {
+    createUser,
     error,
+    getUser,
     getUsers,
     loading,
     updateUserActive,

@@ -2,6 +2,7 @@
 import { getOrderTableColumns } from '~/config/orderTableColumns'
 import type { SortBy, SortDir } from '~/types/Table'
 import type { OrderTableRow } from '~/types/OrderTableRow'
+import type { DeliveryAgentChoice } from '~/composables/useOrder'
 
 const UBadge = resolveComponent('UBadge')
 const UButton = resolveComponent('UButton')
@@ -13,10 +14,11 @@ const searchInput = ref('')
 const ALL_STATUSES = '__all__'
 const statusFilter = ref(ALL_STATUSES)
 
-const { getOrders, updateOrderStatus } = useOrder()
+const { getDeliveryAgents, getOrder, getOrders, updateOrder } = useOrder()
 const toast = useToast()
 
 const orderData = ref<OrderTableRow[]>([])
+const deliveryAgents = ref<DeliveryAgentChoice[]>([])
 const isLoading = ref(false)
 const isSaving = ref(false)
 const isEditorOpen = ref(false)
@@ -24,6 +26,10 @@ const selectedOrder = ref<OrderTableRow | null>(null)
 const saveError = ref('')
 const orderForm = reactive({
   status: 'pending',
+  delivery_status: 'processing',
+  tracking_token: '',
+  notes: '',
+  delivery_agent_id: null as number | null,
 })
 
 const statusOptions = [
@@ -37,6 +43,20 @@ const statusOptions = [
 ]
 
 const editableStatusOptions = statusOptions.filter(option => option.value !== ALL_STATUSES)
+const deliveryStatusOptions = [
+  { label: 'Processing', value: 'processing' },
+  { label: 'Assigned', value: 'assigned' },
+  { label: 'In transit', value: 'in_transit' },
+  { label: 'Delivered', value: 'delivered' },
+  { label: 'Failed attempt', value: 'failed_attempt' },
+]
+const deliveryAgentOptions = computed(() => [
+  { label: 'Unassigned', value: null },
+  ...deliveryAgents.value.map(agent => ({
+    label: `${agent.display_name} / ${agent.phone_number}`,
+    value: agent.id,
+  })),
+])
 
 const columns = getOrderTableColumns({
   onManage: order => openOrder(order),
@@ -91,25 +111,50 @@ function clearFilters() {
 
 async function loadOrders() {
   isLoading.value = true
-  const result = await getOrders()
+  const [ordersResult, agentsResult] = await Promise.all([
+    getOrders(),
+    getDeliveryAgents(),
+  ])
 
-  if (result.success)
-    orderData.value = result.data?.items || []
+  if (ordersResult.success)
+    orderData.value = ordersResult.data?.items || []
   else {
     orderData.value = []
     toast.add({
       title: 'Could not load orders',
-      description: result.error || 'Please try again.',
+      description: ordersResult.error || 'Please try again.',
       color: 'error',
     })
   }
 
+  if (agentsResult.success)
+    deliveryAgents.value = agentsResult.data || []
+  else
+    deliveryAgents.value = []
+
   isLoading.value = false
 }
 
-function openOrder(order: OrderTableRow) {
-  selectedOrder.value = order
-  orderForm.status = order.status
+async function openOrder(order: OrderTableRow) {
+  isLoading.value = true
+  const result = await getOrder(order.id)
+  isLoading.value = false
+
+  if (!result.success || !result.data) {
+    toast.add({
+      title: 'Could not load order details',
+      description: result.error || 'Please try again.',
+      color: 'error',
+    })
+    return
+  }
+
+  selectedOrder.value = result.data
+  orderForm.status = result.data.status
+  orderForm.delivery_status = result.data.deliveryStatus || 'processing'
+  orderForm.tracking_token = result.data.trackingToken || ''
+  orderForm.notes = result.data.notes || ''
+  orderForm.delivery_agent_id = result.data.deliveryAgent?.id || null
   saveError.value = ''
   isEditorOpen.value = true
 }
@@ -121,8 +166,12 @@ async function submitOrderForm() {
   isSaving.value = true
   saveError.value = ''
 
-  const result = await updateOrderStatus(selectedOrder.value.id, {
+  const result = await updateOrder(selectedOrder.value.id, {
     status: orderForm.status,
+    delivery_status: orderForm.delivery_status,
+    tracking_token: orderForm.tracking_token.trim(),
+    notes: orderForm.notes.trim() || null,
+    delivery_agent_id: orderForm.delivery_agent_id,
   })
 
   if (result.success) {
@@ -289,6 +338,27 @@ onMounted(loadOrders)
           </div>
         </div>
 
+        <div class="mb-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Shipping</p>
+            <p class="mt-1 font-semibold text-slate-950">{{ selectedOrder.shippingAddress?.name }}</p>
+            <p class="text-sm text-slate-600">{{ selectedOrder.shippingAddress?.phone_number }}</p>
+            <p class="text-sm text-slate-600">
+              {{ selectedOrder.shippingAddress?.address_line_1 }},
+              {{ selectedOrder.shippingAddress?.city }},
+              {{ selectedOrder.shippingAddress?.country }}
+            </p>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Tracking</p>
+            <p class="mt-1 font-mono text-sm font-semibold text-slate-950">{{ selectedOrder.trackingToken }}</p>
+            <p class="mt-2 text-xs font-bold uppercase tracking-wide text-slate-500">Delivery agent</p>
+            <p class="mt-1 text-sm text-slate-700">
+              {{ selectedOrder.deliveryAgent?.display_name || 'Unassigned' }}
+            </p>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <UFormField label="Order status">
             <USelect
@@ -299,8 +369,52 @@ onMounted(loadOrders)
             />
           </UFormField>
           <UFormField label="Delivery status">
-            <UInput :model-value="selectedOrder.deliveryStatus" readonly />
+            <USelect
+              v-model="orderForm.delivery_status"
+              :items="deliveryStatusOptions"
+              value-attribute="value"
+              option-attribute="label"
+            />
           </UFormField>
+          <UFormField label="Tracking token">
+            <UInput v-model="orderForm.tracking_token" />
+          </UFormField>
+          <UFormField label="Delivery agent">
+            <USelect
+              v-model="orderForm.delivery_agent_id"
+              :items="deliveryAgentOptions"
+              value-attribute="value"
+              option-attribute="label"
+            />
+          </UFormField>
+          <UFormField label="Notes" class="md:col-span-2">
+            <UTextarea v-model="orderForm.notes" :rows="4" />
+          </UFormField>
+        </div>
+
+        <div class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <h4 class="font-semibold text-slate-950">Items</h4>
+            <div v-if="selectedOrder.items?.length" class="mt-3 space-y-3">
+              <div v-for="item in selectedOrder.items" :key="item.id" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <p class="font-semibold text-slate-950">{{ item.product_name }}</p>
+                <p class="text-xs text-slate-500">{{ item.sku }} / Qty {{ item.quantity }}</p>
+                <p class="text-sm text-slate-700">{{ selectedOrder.currency }} {{ item.line_total }}</p>
+              </div>
+            </div>
+            <p v-else class="mt-3 text-sm text-slate-500">No items found.</p>
+          </div>
+
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <h4 class="font-semibold text-slate-950">Refunds</h4>
+            <div v-if="selectedOrder.refunds?.length" class="mt-3 space-y-3">
+              <div v-for="refund in selectedOrder.refunds" :key="refund.id" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <p class="font-semibold text-slate-950">{{ selectedOrder.currency }} {{ refund.amount }}</p>
+                <p class="text-xs text-slate-500">{{ refund.status }} / {{ refund.reason }}</p>
+              </div>
+            </div>
+            <p v-else class="mt-3 text-sm text-slate-500">No refunds recorded.</p>
+          </div>
         </div>
 
         <template #footer>

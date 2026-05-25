@@ -10,6 +10,10 @@ def utc_now() -> datetime:
 class Review(db.Model):
     __tablename__ = "reviews"
 
+    STATUS_MODERATION = 0
+    STATUS_APPROVED = 1
+    STATUS_REJECTED = 2
+
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     product_id = db.Column(
@@ -21,6 +25,7 @@ class Review(db.Model):
     rating = db.Column(db.Integer, nullable=False)
     title = db.Column(db.String(160), nullable=True)
     comment = db.Column(db.Text, nullable=False)
+    status = db.Column(db.Integer, nullable=False, default=STATUS_MODERATION)
     is_verified_buyer = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(

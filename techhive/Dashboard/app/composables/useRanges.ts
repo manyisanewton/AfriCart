@@ -24,6 +24,7 @@ export interface RangePayload {
 
 function readApiError(err: any) {
   return err?.data?.error?.detail
+    || err?.data?.error?.message
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
@@ -39,14 +40,20 @@ export function useRanges() {
     error.value = null
 
     try {
-      const result = await request<{ results: RangeItem[], pagination: any }>('/admin/ranges/', {
+      const result = await request<{ items: RangeItem[] }>('/admin/ranges', {
         method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
       })
-      return { success: true, data: result }
+      return {
+        success: true,
+        data: {
+          results: result.items || [],
+          pagination: {
+            page: params.page || 1,
+            page_size: params.pageSize || 200,
+            total: result.items?.length || 0,
+          },
+        },
+      }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -62,11 +69,11 @@ export function useRanges() {
     error.value = null
 
     try {
-      const result = await request<{ range: RangeItem }>('/admin/ranges/', {
+      const result = await request<{ item: RangeItem }>('/admin/ranges', {
         method: 'POST',
         body: payload,
       })
-      return { success: true, data: result.range }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -82,11 +89,11 @@ export function useRanges() {
     error.value = null
 
     try {
-      const result = await request<{ range: RangeItem }>(`/admin/ranges/${id}/`, {
+      const result = await request<{ item: RangeItem }>(`/admin/ranges/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.range }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -102,7 +109,7 @@ export function useRanges() {
     error.value = null
 
     try {
-      await request(`/admin/ranges/${id}/`, { method: 'DELETE' })
+      await request(`/admin/ranges/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {
@@ -119,8 +126,8 @@ export function useRanges() {
     error.value = null
 
     try {
-      const result = await request<{ results: RangeProductItem[] }>(`/admin/ranges/${id}/products/`, { method: 'GET' })
-      return { success: true, data: result.results }
+      const result = await request<{ items: RangeProductItem[] }>(`/admin/ranges/${id}/products`, { method: 'GET' })
+      return { success: true, data: result.items || [] }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -136,11 +143,11 @@ export function useRanges() {
     error.value = null
 
     try {
-      const result = await request<{ range: RangeItem }>(`/admin/ranges/${id}/products/`, {
+      const result = await request<{ item: RangeItem }>(`/admin/ranges/${id}/products`, {
         method: 'POST',
         body: { product_id: productId },
       })
-      return { success: true, data: result.range }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -156,11 +163,12 @@ export function useRanges() {
     error.value = null
 
     try {
-      const result = await request<{ range: RangeItem }>(`/admin/ranges/${id}/products/`, {
+      const result = await request<{ item: RangeItem }>(`/admin/ranges/${id}/products`, {
         method: 'DELETE',
         body: { product_id: productId },
+        query: { product_id: productId },
       })
-      return { success: true, data: result.range }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)

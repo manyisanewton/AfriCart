@@ -177,13 +177,13 @@ async function submitAttribute() {
     : await createAttribute(payload)
 
   if (result.success) {
+    resetForm()
     toast.add({
       title: editingAttribute.value ? 'Attribute updated' : 'Attribute created',
       description: `${payload.name} was saved successfully.`,
       color: 'success',
     })
     editorOpen.value = false
-    resetForm()
     await loadAttributes()
   }
   else {

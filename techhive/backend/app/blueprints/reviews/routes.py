@@ -24,13 +24,20 @@ def serialize_review(review: Review) -> dict:
 
 
 def serialize_review_summary(product: Product) -> dict:
+    approved_reviews = [
+        review for review in product.reviews if review.status == Review.STATUS_APPROVED
+    ]
     counts = {str(star): 0 for star in range(1, 6)}
-    for review in product.reviews:
+    for review in approved_reviews:
         counts[str(review.rating)] += 1
 
     return {
-        "average_rating": product.average_rating,
-        "review_count": product.review_count,
+        "average_rating": (
+            round(sum(review.rating for review in approved_reviews) / len(approved_reviews), 2)
+            if approved_reviews
+            else None
+        ),
+        "review_count": len(approved_reviews),
         "distribution": counts,
     }
 
@@ -53,7 +60,7 @@ def list_product_reviews(slug: str):
         return jsonify({"error": {"code": "not_found", "message": "Product not found."}}), 404
 
     reviews = (
-        Review.query.filter_by(product_id=product.id)
+        Review.query.filter_by(product_id=product.id, status=Review.STATUS_APPROVED)
         .order_by(Review.created_at.desc(), Review.id.desc())
         .all()
     )
@@ -109,6 +116,7 @@ def create_review():
         rating=payload["rating"],
         title=payload["title"],
         comment=payload["comment"],
+        status=Review.STATUS_MODERATION,
         is_verified_buyer=True,
     )
     db.session.add(review)

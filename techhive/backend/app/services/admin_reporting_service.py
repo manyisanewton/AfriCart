@@ -103,7 +103,7 @@ def build_admin_operations_queues() -> dict:
         .all()
     )
     low_stock_products = (
-        Product.query.filter(Product.stock_quantity <= 5)
+        Product.query.filter(Product.stock_quantity <= Product.low_stock_threshold)
         .order_by(Product.stock_quantity.asc(), Product.id.asc())
         .all()
     )

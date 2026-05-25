@@ -2,8 +2,44 @@
 import axios from "axios";
 
 const api = axios.create({
-    baseURL: "http://127.0.0.1:5000/api/v1"
+    baseURL: import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5000/api/v1"
 });
+
+const API_ORIGIN = String(api.defaults.baseURL || "").replace(/\/api\/v1\/?$/, "");
+const FALLBACK_IMAGE = "https://placehold.co/400x400?text=No+Image";
+
+function mediaUrl(src) {
+    if (!src) return FALLBACK_IMAGE;
+    if (src.startsWith("blob:") || src.startsWith("data:") || /^https?:\/\//.test(src)) {
+        return src;
+    }
+    return `${API_ORIGIN}${src.startsWith("/") ? src : `/${src}`}`;
+}
+
+function normalizeProduct(product) {
+    if (!product) return product;
+
+    const images = Array.isArray(product.images)
+        ? product.images.map((image) => mediaUrl(image?.image_url || image?.src || image))
+        : [];
+
+    const primaryImage = mediaUrl(
+        product.primary_image?.image_url
+        || product.primary_image
+        || images[0]
+    );
+
+    return {
+        ...product,
+        price: Number(product.price || 0),
+        compare_at_price: product.compare_at_price ? Number(product.compare_at_price) : null,
+        primary_image: primaryImage,
+        images: images.length ? images : [primaryImage],
+        category_name: product.category?.name || "",
+        category_slug: product.category?.slug || "",
+        brand_name: product.brand?.name || "",
+    };
+}
 
 
 const mockProducts = [{
@@ -72,31 +108,39 @@ const mockProducts = [{
 export const productAPI = {
     listProducts: async() => {
         const response = await api.get('/products');
-        console.log("REAL API RESPONSE:", response.data);
-        return response;
+        return {
+            ...response,
+            data: {
+                ...response.data,
+                items: (response.data?.items || []).map(normalizeProduct),
+            },
+        };
     },
     listCategories: async() => {
         const response = await api.get('/categories');
-        console.log("REAL CATEGORIES:", response.data);
         return response;
     },
     getProduct: async(slug) => {
         try {
             const response = await api.get(`/products/${slug}`);
-            console.log("GET PRODUCT RESPONSE:", response.data);
-            if (response.data) {
-                return response;
+            if (response.data?.item) {
+                return {
+                    ...response,
+                    data: {
+                        ...response.data,
+                        item: normalizeProduct(response.data.item),
+                    },
+                };
             }
             const product = mockProducts.find(p => p.slug === slug);
-            console.log("MOCK FALLBACK:", product);
-            return { data: product };
+            return { data: { item: normalizeProduct(product) } };
         } catch (error) {
-            console.log("GET PRODUCT ERROR:", error.message);
             const product = mockProducts.find(p => p.slug === slug);
-            console.log("MOCK FALLBACK:", product);
-            return { data: product };
+            return { data: { item: normalizeProduct(product) } };
         }
-    }
+    },
+    mediaUrl,
+    normalizeProduct,
 };
 
 export default api;

@@ -4,7 +4,7 @@ import ProductForm, { type ProductFormSchema } from "~/components/Forms/ProductF
 import type { ProductImageItem } from "~/types/ProductImage";
 
 const pageTitle = computed(() => "New Product");
-const { createProduct, getCategoryOptions, syncProductImages } = useProduct();
+const { createProduct, getBrandOptions, getCategoryOptions, getVendorOptions, syncProductImages } = useProduct();
 const isSaving = ref(false)
 
 function discardChanges() {
@@ -58,12 +58,21 @@ const statusOptions = [
   },
 ];
 const categories = ref<{ label: string; value: string }[]>([]);
+const brands = ref<{ label: string; value: string }[]>([]);
+const vendors = ref<{ label: string; value: string }[]>([]);
 
 onMounted(async () => {
-  const result = await getCategoryOptions()
-  if (result.success) {
-    categories.value = result.data
-  }
+  const [categoryResult, brandResult, vendorResult] = await Promise.all([
+    getCategoryOptions(),
+    getBrandOptions(),
+    getVendorOptions(),
+  ])
+  if (categoryResult.success)
+    categories.value = categoryResult.data
+  if (brandResult.success)
+    brands.value = brandResult.data
+  if (vendorResult.success)
+    vendors.value = vendorResult.data
 })
 
 const images = ref<ProductImageItem[]>([]);
@@ -71,7 +80,7 @@ const images = ref<ProductImageItem[]>([]);
 
 <template>
   <div class="w-full">
-    <ProductForm :status-options="statusOptions" :categories="categories" @on-submit="submit">
+    <ProductForm :status-options="statusOptions" :categories="categories" :brands="brands" :vendors="vendors" @on-submit="submit">
       <template #header="{ submit }">
         <div class="mx-auto max-w-screen-xl py-4">
           <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

@@ -15,18 +15,14 @@ const pageSize = ref(10);
 const searchQuery = ref("");
 const ALL_STATUSES = "__all__";
 const statusFilter = ref<typeof ALL_STATUSES | "active" | "draft">(ALL_STATUSES);
-const pendingDeleteProduct = ref<ProductTableRow | null>(null);
-const deletingProductId = ref<number | null>(null);
+const router = useRouter();
 
-const { deleteProduct, getProducts } = useProduct();
+const { getProducts } = useProduct();
 const toast = useToast();
 
 const columns = getProductTableColumns({
-  onDelete: (product) => {
-    pendingDeleteProduct.value = product;
-  },
   onEdit: (product) => {
-    navigateTo(`/products/${product.id}/edit`);
+    openProduct(product);
   },
   sortBy,
   sortDir,
@@ -47,12 +43,8 @@ const statusOptions = [
 async function loadProducts() {
   isLoading.value = true;
   const result = await getProducts({
-    page: currentPage.value,
-    pageSize: pageSize.value,
     search: searchQuery.value,
     status: statusFilter.value === ALL_STATUSES ? "" : statusFilter.value,
-    sortBy: sortBy.value,
-    sortDir: sortDir.value,
   });
 
   if (result.success) {
@@ -74,37 +66,8 @@ async function loadProducts() {
   isLoading.value = false;
 }
 
-async function confirmDeleteProduct() {
-  if (!pendingDeleteProduct.value)
-    return;
-
-  deletingProductId.value = pendingDeleteProduct.value.id;
-  const result = await deleteProduct(pendingDeleteProduct.value.id);
-
-  if (result.success) {
-    toast.add({
-      title: "Product deleted",
-      description: `${pendingDeleteProduct.value.name} was removed successfully.`,
-      color: "success",
-    });
-    pendingDeleteProduct.value = null;
-    if (productData.value.length === 1 && currentPage.value > 1)
-      currentPage.value -= 1;
-    await loadProducts();
-  }
-  else {
-    toast.add({
-      title: "Delete failed",
-      description: result.error || "Could not delete product.",
-      color: "error",
-    });
-  }
-
-  deletingProductId.value = null;
-}
-
-watch([currentPage, pageSize, searchQuery, sortBy, sortDir, statusFilter], loadProducts, { immediate: true });
-watch([searchQuery, statusFilter, pageSize], () => {
+watch([currentPage, pageSize, searchQuery, statusFilter], loadProducts, { immediate: true });
+watch([searchQuery, statusFilter], () => {
   currentPage.value = 1;
 });
 
@@ -114,8 +77,9 @@ const visibleLowStock = computed(() => productData.value.filter(product => Numbe
 
 function openProduct(row: any) {
   const product = row?.original || row;
-  if (product?.id)
-    navigateTo(`/products/${product.id}/edit`);
+  if (!product?.id)
+    return;
+  router.push(`/products/${product.id}/edit`);
 }
 </script>
 
@@ -124,7 +88,7 @@ function openProduct(row: any) {
     <div class="mb-4 flex flex-col gap-4 p-4 pb-2 sm:p-8 sm:pb-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
         <h1 class="text-2xl font-black text-slate-950">Products</h1>
-        <p class="mt-1 text-sm text-slate-500">Create, update, price, stock, and image products shown in the storefront.</p>
+        <p class="mt-1 text-sm text-slate-500">Review live storefront products and manage whether they are visible in the marketplace.</p>
       </div>
       <div class="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
         <UInput
@@ -186,58 +150,7 @@ function openProduct(row: any) {
         <p class="text-sm text-slate-500">
           Page {{ currentPage }} of {{ totalPages }} · {{ totalItems }} products
         </p>
-        <UPagination
-          :page="currentPage"
-          :page-count="pageSize"
-          :total="totalItems"
-          @update:page="(page: number) => currentPage = page"
-        />
       </div>
-    </div>
-
-    <div
-      v-if="pendingDeleteProduct"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-    >
-      <UCard class="w-full max-w-md">
-        <template #header>
-          <div class="flex items-center gap-3">
-            <div class="rounded-full bg-error/10 p-2 text-error">
-              <UIcon name="i-lucide-trash-2" />
-            </div>
-            <div>
-              <h3 class="font-semibold text-default">Delete product</h3>
-              <p class="text-sm text-dimmed">This action cannot be undone.</p>
-            </div>
-          </div>
-        </template>
-
-        <p class="text-sm text-default">
-          Delete
-          <span class="font-semibold">{{ pendingDeleteProduct.name }}</span>
-          from the catalogue?
-        </p>
-
-        <template #footer>
-          <div class="flex justify-end gap-3">
-            <UButton
-              color="neutral"
-              variant="outline"
-              @click="pendingDeleteProduct = null"
-            >
-              Cancel
-            </UButton>
-            <UButton
-              color="error"
-              variant="solid"
-              :loading="deletingProductId === pendingDeleteProduct.id"
-              @click="confirmDeleteProduct"
-            >
-              Delete product
-            </UButton>
-          </div>
-        </template>
-      </UCard>
     </div>
   </div>
 </template>

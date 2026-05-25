@@ -5,12 +5,15 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return
 
   const publicRoutes = new Set(['/login'])
+  const passwordChangeRoute = '/change-password-required'
   const auth = useAuth()
 
   if (!auth.hasCheckedSession.value)
     await auth.refreshSession()
 
   if (publicRoutes.has(to.path)) {
+    if (auth.hasDashboardAccess.value && auth.requiresPasswordChange.value)
+      return navigateTo(passwordChangeRoute)
     if (auth.hasDashboardAccess.value)
       return navigateTo(auth.homeRoute.value)
     return
@@ -18,4 +21,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   if (!auth.hasDashboardAccess.value)
     return navigateTo('/login')
+
+  if (auth.requiresPasswordChange.value && to.path !== passwordChangeRoute)
+    return navigateTo(passwordChangeRoute)
+
+  if (!auth.requiresPasswordChange.value && to.path === passwordChangeRoute)
+    return navigateTo(auth.homeRoute.value)
 })

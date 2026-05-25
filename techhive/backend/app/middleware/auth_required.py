@@ -28,6 +28,15 @@ def auth_required(fn):
         g.current_user = user
         request.current_user = user
         g.jwt_payload = payload
+
+        allowed_when_password_change_required = {
+            "auth.change_password",
+            "auth.get_current_user",
+            "auth.logout",
+        }
+        if user.must_change_password and request.endpoint not in allowed_when_password_change_required:
+            return auth_error("Password change required before continuing.", 403)
+
         return fn(*args, **kwargs)
 
     return wrapper

@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import secrets
+import string
 
 import jwt
 from flask import current_app
@@ -11,6 +13,19 @@ def hash_password(password: str) -> str:
 
 def verify_password(password_hash: str, password: str) -> bool:
     return check_password_hash(password_hash, password)
+
+
+def generate_temporary_password(length: int = 16) -> str:
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    while True:
+        password = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (
+            any(ch.islower() for ch in password)
+            and any(ch.isupper() for ch in password)
+            and any(ch.isdigit() for ch in password)
+            and any(ch in "!@#$%^&*" for ch in password)
+        ):
+            return password
 
 
 def _token_payload(user_id: int, token_type: str, expires_delta) -> dict:

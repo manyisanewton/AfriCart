@@ -30,6 +30,7 @@ class Product(db.Model):
     compare_at_price = db.Column(db.Numeric(12, 2), nullable=True)
     currency = db.Column(db.String(3), nullable=False, default="KES")
     stock_quantity = db.Column(db.Integer, nullable=False, default=0)
+    low_stock_threshold = db.Column(db.Integer, nullable=False, default=5)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     is_featured = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)

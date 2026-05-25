@@ -7,11 +7,14 @@ import ProductForm, {
 import type { ProductImageItem } from "~/types/ProductImage";
 
 const { deleteProduct, getProduct, getCategoryOptions, syncProductImages, updateProduct } = useProduct();
+const { getBrandOptions, getVendorOptions } = useProduct();
 
 const route = useRoute();
 
 const product = ref<any>(null)
 const categories = ref<{ label: string; value: string }[]>([])
+const brands = ref<{ label: string; value: string }[]>([])
+const vendors = ref<{ label: string; value: string }[]>([])
 const originalImages = ref<ProductImageItem[]>([])
 const isDeleteModalOpen = ref(false)
 const isDeleting = ref(false)
@@ -21,9 +24,11 @@ const loadError = ref("")
 
 onMounted(async () => {
   isLoadingProduct.value = true
-  const [productResult, categoryResult] = await Promise.all([
+  const [productResult, categoryResult, brandResult, vendorResult] = await Promise.all([
     getProduct(route.params.id as string),
     getCategoryOptions(),
+    getBrandOptions(),
+    getVendorOptions(),
   ])
 
   if (productResult.success)
@@ -33,6 +38,12 @@ onMounted(async () => {
 
   if (categoryResult.success)
     categories.value = categoryResult.data
+
+  if (brandResult.success)
+    brands.value = brandResult.data
+
+  if (vendorResult.success)
+    vendors.value = vendorResult.data
 
   isLoadingProduct.value = false
 })
@@ -147,6 +158,8 @@ watch(product, (value) => {
       :values="product"
       :status-options="statusOptions"
       :categories="categories"
+      :brands="brands"
+      :vendors="vendors"
       @on-submit="submit"
     >
       <template #header="{ submit }">

@@ -11,6 +11,12 @@ class Category(db.Model):
     __tablename__ = "categories"
 
     id = db.Column(db.Integer, primary_key=True)
+    parent_id = db.Column(
+        db.Integer,
+        db.ForeignKey("categories.id"),
+        nullable=True,
+        index=True,
+    )
     name = db.Column(db.String(120), nullable=False, unique=True)
     slug = db.Column(db.String(140), nullable=False, unique=True, index=True)
     description = db.Column(db.Text, nullable=True)
@@ -23,4 +29,16 @@ class Category(db.Model):
         onupdate=utc_now,
     )
 
+    parent = db.relationship(
+        "Category",
+        remote_side=[id],
+        back_populates="children",
+    )
+    children = db.relationship(
+        "Category",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="Category.name.asc()",
+    )
     products = db.relationship("Product", back_populates="category", lazy="selectin")

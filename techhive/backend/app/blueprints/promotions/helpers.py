@@ -7,7 +7,9 @@ from app.models import PromoCode, PromoCodeType
 def serialize_promo_code(promo_code: PromoCode) -> dict:
     return {
         "id": promo_code.id,
+        "name": promo_code.name,
         "code": promo_code.code,
+        "usage": promo_code.usage,
         "discount_type": promo_code.discount_type.value,
         "discount_value": promo_code.discount_value_amount,
         "minimum_order_amount": promo_code.minimum_order_amount_value,
