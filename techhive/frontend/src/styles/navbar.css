@@ -57,7 +57,7 @@
 
 .logo-image {
     display: block;
-    height: 56px;
+    height: 66px;
     width: auto;
     object-fit: contain;
 }
@@ -207,7 +207,7 @@
         gap: 1rem;
     }
     .logo-image {
-        height: 44px;
+        height: 50px;
     }
     .mobile-menu {
         display: flex;
