@@ -6,6 +6,7 @@ from app.blueprints.reviews.schemas import validate_review_payload
 from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.models import OrderItem, Product, Review
+from app.services.audit_service import log_request_audit_event
 
 
 def serialize_review(review: Review) -> dict:
@@ -120,6 +121,18 @@ def create_review():
         is_verified_buyer=True,
     )
     db.session.add(review)
+    db.session.flush()
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.review_created",
+            entity_type="review",
+            entity_id=review.id,
+            message="Customer submitted a product review.",
+            target_repr=product.name,
+            metadata={"product_id": product.id, "rating": review.rating, "status": review.status},
+        )
+    )
     db.session.commit()
 
     return jsonify({"item": serialize_review(review)}), 201

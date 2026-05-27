@@ -1,35 +1,65 @@
-export interface WeightBandItem {
+export interface ShippingZoneItem {
   id: number
-  upper_limit: number
-  charge: number
+  name: string
+  city: string
+  fee: string
+  estimated_days_min: number
+  estimated_days_max: number
+  is_active: boolean
+  created_at: string | null
 }
 
-export interface WeightBasedMethodItem {
+export interface ShippingZonePayload {
+  name: string
+  city: string
+  fee: number | string
+  estimated_days_min: number | string
+  estimated_days_max: number | string
+  is_active?: boolean
+}
+
+export interface DeliveryAgentItem {
   id: number
-  code: string
-  name: string
-  description: string
-  default_weight: number
-  bands: WeightBandItem[]
+  display_name: string
+  phone_number: string
+  is_active: boolean
+  active_assignments: number
 }
 
-export interface WeightBasedMethodPayload {
-  code?: string
-  name: string
-  description?: string
-  default_weight?: number | string
-}
-
-export interface WeightBandPayload {
-  upper_limit: number | string
-  charge: number | string
+export interface ShippingOrderItem {
+  id: number
+  order_number: string
+  status: string
+  delivery_status: string
+  tracking_token: string
+  delivery_zone_name: string | null
+  currency: string
+  total_amount: string
+  shipping_amount: string
+  shipping_address: {
+    name: string
+    phone_number: string
+    country: string
+    city: string
+    state_or_county: string | null
+    postal_code: string | null
+    address_line_1: string
+    address_line_2: string | null
+  }
+  delivery_agent?: {
+    id: number
+    display_name: string
+    phone_number: string
+  }
+  notes: string | null
+  created_at: string
 }
 
 function readApiError(err: any) {
-  const detail = err?.data?.error?.detail || err?.data?.detail || err?.message
-  const errors = err?.data?.error?.errors || err?.data
+  const detail = err?.data?.error?.message || err?.data?.detail || err?.message
+  const errors = err?.data?.error?.details || err?.data?.error?.errors || err?.data
 
-  if (errors && typeof errors === 'object') {
+  if (errors && typeof errors === 'object' && !Array.isArray(errors)) {
     return Object.entries(errors)
       .map(([field, messages]) => {
         const text = Array.isArray(messages) ? messages.join(' ') : String(messages)
@@ -46,19 +76,13 @@ export function useShipping() {
   const error = ref<string | null>(null)
   const { request } = useBackendApi()
 
-  async function getWeightBasedMethods(params: { page?: number, pageSize?: number } = {}) {
+  async function getZones() {
     loading.value = true
     error.value = null
 
     try {
-      const result = await request<{ results: WeightBasedMethodItem[], pagination: any }>('/admin/shipping/weight-based/', {
-        method: 'GET',
-        query: {
-          page: params.page || 1,
-          page_size: params.pageSize || 200,
-        },
-      })
-      return { success: true, data: result }
+      const result = await request<{ items: ShippingZoneItem[] }>('/admin/shipping/zones', { method: 'GET' })
+      return { success: true, data: result.items || [] }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -69,71 +93,52 @@ export function useShipping() {
     }
   }
 
-  async function getWeightBasedMethod(id: number | string) {
+  async function createZone(payload: ShippingZonePayload) {
     loading.value = true
     error.value = null
 
     try {
-      const result = await request<{ method: WeightBasedMethodItem }>(`/admin/shipping/weight-based/${id}/`, {
-        method: 'GET',
-      })
-      return { success: true, data: result.method }
-    }
-    catch (err: any) {
-      error.value = readApiError(err)
-      return { success: false, error: error.value }
-    }
-    finally {
-      loading.value = false
-    }
-  }
-
-  async function createWeightBasedMethod(payload: WeightBasedMethodPayload) {
-    loading.value = true
-    error.value = null
-
-    try {
-      const result = await request<{ method: WeightBasedMethodItem }>('/admin/shipping/weight-based/', {
+      const result = await request<{ item: ShippingZoneItem }>('/admin/shipping/zones', {
         method: 'POST',
         body: payload,
       })
-      return { success: true, data: result.method }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
-      return { success: false, error: error.value, errors: err?.data?.error?.errors || null }
+      return { success: false, error: error.value }
     }
     finally {
       loading.value = false
     }
   }
 
-  async function updateWeightBasedMethod(id: number | string, payload: Partial<WeightBasedMethodPayload>) {
+  async function updateZone(id: number | string, payload: Partial<ShippingZonePayload>) {
     loading.value = true
     error.value = null
 
     try {
-      const result = await request<{ method: WeightBasedMethodItem }>(`/admin/shipping/weight-based/${id}/`, {
+      const result = await request<{ item: ShippingZoneItem }>(`/admin/shipping/zones/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.method }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
-      return { success: false, error: error.value, errors: err?.data?.error?.errors || null }
+      return { success: false, error: error.value }
     }
     finally {
       loading.value = false
     }
   }
 
-  async function deleteWeightBasedMethod(id: number | string) {
+  async function deleteZone(id: number | string) {
     loading.value = true
     error.value = null
 
     try {
-      await request(`/admin/shipping/weight-based/${id}/`, { method: 'DELETE' })
+      await request(`/admin/shipping/zones/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {
@@ -145,53 +150,55 @@ export function useShipping() {
     }
   }
 
-  async function createWeightBand(methodId: number | string, payload: WeightBandPayload) {
+  async function getDeliveryAgents() {
     loading.value = true
     error.value = null
 
     try {
-      const result = await request<{ band: WeightBandItem }>(`/admin/shipping/weight-based/${methodId}/bands/`, {
-        method: 'POST',
-        body: payload,
-      })
-      return { success: true, data: result.band }
+      const result = await request<{ items: DeliveryAgentItem[] }>('/admin/delivery-agents', { method: 'GET' })
+      return { success: true, data: result.items || [] }
     }
     catch (err: any) {
       error.value = readApiError(err)
-      return { success: false, error: error.value, errors: err?.data?.error?.errors || null }
+      return { success: false, error: error.value }
     }
     finally {
       loading.value = false
     }
   }
 
-  async function updateWeightBand(methodId: number | string, bandId: number | string, payload: WeightBandPayload) {
+  async function getShippingOrders() {
     loading.value = true
     error.value = null
 
     try {
-      const result = await request<{ band: WeightBandItem }>(`/admin/shipping/weight-based/${methodId}/bands/${bandId}/`, {
+      const result = await request<{ items: ShippingOrderItem[] }>('/admin/shipping/orders', { method: 'GET' })
+      return { success: true, data: result.items || [] }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function updateOrderShipping(id: number | string, payload: {
+    delivery_agent_id?: number | null
+    delivery_status?: string
+    tracking_token?: string
+    notes?: string
+  }) {
+    loading.value = true
+    error.value = null
+
+    try {
+      const result = await request<{ item: ShippingOrderItem }>(`/admin/orders/${id}`, {
         method: 'PATCH',
         body: payload,
       })
-      return { success: true, data: result.band }
-    }
-    catch (err: any) {
-      error.value = readApiError(err)
-      return { success: false, error: error.value, errors: err?.data?.error?.errors || null }
-    }
-    finally {
-      loading.value = false
-    }
-  }
-
-  async function deleteWeightBand(methodId: number | string, bandId: number | string) {
-    loading.value = true
-    error.value = null
-
-    try {
-      await request(`/admin/shipping/weight-based/${methodId}/bands/${bandId}/`, { method: 'DELETE' })
-      return { success: true }
+      return { success: true, data: result.item }
     }
     catch (err: any) {
       error.value = readApiError(err)
@@ -205,13 +212,12 @@ export function useShipping() {
   return {
     loading,
     error,
-    createWeightBand,
-    createWeightBasedMethod,
-    deleteWeightBand,
-    deleteWeightBasedMethod,
-    getWeightBasedMethod,
-    getWeightBasedMethods,
-    updateWeightBand,
-    updateWeightBasedMethod,
+    getZones,
+    createZone,
+    updateZone,
+    deleteZone,
+    getDeliveryAgents,
+    getShippingOrders,
+    updateOrderShipping,
   }
 }

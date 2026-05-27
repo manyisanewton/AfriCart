@@ -32,7 +32,8 @@ export interface AuditLogListParams {
 }
 
 function readApiError(err: any) {
-  return err?.data?.error?.detail
+  return err?.data?.error?.message
+    || err?.data?.error?.detail
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
@@ -48,7 +49,7 @@ export function useAuditLogs() {
     error.value = null
 
     try {
-      const result = await request<{ results: AuditLogItem[], pagination: any }>('/admin/audit-logs/', {
+      const result = await request<{ results: AuditLogItem[], pagination: any }>('/admin/audit-logs', {
         method: 'GET',
         query: {
           page: params.page || 1,
@@ -80,7 +81,7 @@ export function useAuditLogs() {
     error.value = null
 
     try {
-      const result = await request<{ audit_log: AuditLogItem }>(`/admin/audit-logs/${id}/`, {
+      const result = await request<{ audit_log: AuditLogItem }>(`/admin/audit-logs/${id}`, {
         method: 'GET',
       })
       return { success: true, data: result.audit_log }

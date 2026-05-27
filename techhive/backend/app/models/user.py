@@ -95,10 +95,22 @@ class User(db.Model):
         uselist=False,
         lazy="selectin",
     )
+    supplier_profile = db.relationship(
+        "Supplier",
+        back_populates="user",
+        uselist=False,
+        lazy="selectin",
+    )
     vendor_profile = db.relationship(
         "Vendor",
         back_populates="user",
         uselist=False,
+        lazy="selectin",
+    )
+    partners = db.relationship(
+        "Partner",
+        secondary="partner_users",
+        back_populates="users",
         lazy="selectin",
     )
 

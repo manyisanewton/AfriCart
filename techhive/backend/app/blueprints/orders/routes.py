@@ -9,6 +9,7 @@ from app.middleware.auth_required import auth_required
 from app.models import (
     Order,
 )
+from app.services.audit_service import log_request_audit_event
 from app.services.order_service import (
     ServiceError,
     cancel_order_for_user,
@@ -70,6 +71,17 @@ def create_order():
     if error:
         return _validation_or_not_found(error)
 
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.order_created",
+            entity_type="order",
+            entity_id=order.id,
+            message="Customer created an order from storefront cart.",
+            target_repr=order.order_number,
+            metadata={"status": order.status.value, "total_amount": order.total_amount_value},
+        )
+    )
     db.session.commit()
     return jsonify({"item": serialize_order(order, include_items=True)}), 201
 
@@ -124,6 +136,17 @@ def cancel_order(order_id: int):
             error.status_code,
         )
 
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.order_cancelled",
+            entity_type="order",
+            entity_id=order.id,
+            message="Customer cancelled an order.",
+            target_repr=order.order_number,
+            metadata={"status": order.status.value},
+        )
+    )
     db.session.commit()
     return jsonify({"item": serialize_order(order, include_items=True)})
 
@@ -154,5 +177,16 @@ def request_refund(order_id: int):
     if error:
         return _validation_or_not_found(error)
 
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.refund_requested",
+            entity_type="refund",
+            entity_id=refund.id,
+            message="Customer requested a refund.",
+            target_repr=f"Refund #{refund.id}",
+            metadata={"order_id": refund.order_id, "reason": refund.reason, "status": refund.status.value},
+        )
+    )
     db.session.commit()
     return jsonify({"item": serialize_refund(refund)}), 201

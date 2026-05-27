@@ -9,6 +9,8 @@ from app.blueprints.admin import admin_bp
 from app.blueprints.admin.schemas import (
     validate_admin_user_create_payload,
     validate_admin_order_update_payload,
+    validate_delivery_zone_payload,
+    validate_delivery_zone_update_payload,
     validate_admin_product_payload,
     validate_admin_product_update_payload,
     validate_banner_payload,
@@ -26,6 +28,8 @@ from app.blueprints.admin.schemas import (
     validate_offer_status_payload,
     validate_offer_update_payload,
     validate_order_status_payload,
+    validate_partner_payload,
+    validate_partner_update_payload,
     validate_platform_setting_payload,
     validate_platform_setting_update_payload,
     validate_recommendation_settings_update_payload,
@@ -49,6 +53,8 @@ from app.blueprints.admin.schemas import (
     validate_admin_review_update_payload,
     validate_stock_alert_status_payload,
     validate_support_ticket_status_payload,
+    validate_supplier_create_payload,
+    validate_supplier_update_payload,
     validate_user_active_payload,
     validate_vendor_kyc_status_payload,
     validate_vendor_status_payload,
@@ -73,6 +79,7 @@ from app.models import (
     Brand,
     Category,
     DeliveryAgent,
+    DeliveryZone,
     FlashSale,
     NotificationChannel,
     NotificationType,
@@ -80,7 +87,9 @@ from app.models import (
     OfferBenefit,
     OfferCondition,
     Order,
+    OrderItem,
     OrderStatus,
+    Partner,
     NotificationDelivery,
     NotificationDeliveryStatus,
     PlatformSetting,
@@ -98,6 +107,8 @@ from app.models import (
     RefundStatus,
     SupportTicket,
     SupportTicketStatus,
+    Supplier,
+    SupplierStatus,
     User,
     UserRole,
     Vendor,
@@ -340,6 +351,83 @@ def _serialize_range_product(product: Product) -> dict:
     }
 
 
+def _serialize_delivery_zone(zone: DeliveryZone) -> dict:
+    return {
+        "id": zone.id,
+        "name": zone.name,
+        "city": zone.city,
+        "fee": zone.fee_amount,
+        "estimated_days_min": zone.estimated_days_min,
+        "estimated_days_max": zone.estimated_days_max,
+        "is_active": zone.is_active,
+        "created_at": zone.created_at.isoformat() if zone.created_at else None,
+    }
+
+
+def _serialize_partner(partner: Partner) -> dict:
+    return {
+        "id": partner.id,
+        "name": partner.name,
+        "code": partner.code or "",
+        "user_count": len(partner.users),
+    }
+
+
+def _serialize_partner_user(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "username": user.full_name or user.email,
+    }
+
+
+def _serialize_supplier_partner(partner: Partner | None) -> dict:
+    if partner is None:
+        return {"id": 0, "name": "", "code": ""}
+    return {
+        "id": partner.id,
+        "name": partner.name,
+        "code": partner.code or "",
+    }
+
+
+def _serialize_supplier_user(user: User | None) -> dict:
+    if user is None:
+        return {
+            "id": 0,
+            "email": "",
+            "username": "",
+            "first_name": "",
+            "last_name": "",
+            "is_active": False,
+        }
+    return {
+        "id": user.id,
+        "email": user.email,
+        "username": user.full_name or user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "is_active": user.is_active,
+    }
+
+
+def _serialize_supplier(supplier: Supplier) -> dict:
+    return {
+        "id": supplier.id,
+        "status": supplier.status.value if hasattr(supplier.status, "value") else supplier.status,
+        "company_name": supplier.company_name,
+        "contact_name": supplier.contact_name or "",
+        "phone": supplier.phone or "",
+        "country_code": supplier.country_code or "",
+        "website": supplier.website or "",
+        "notes": supplier.notes or "",
+        "partner": _serialize_supplier_partner(supplier.partner),
+        "user": _serialize_supplier_user(supplier.user),
+        "created_at": supplier.created_at.isoformat() if supplier.created_at else None,
+        "updated_at": supplier.updated_at.isoformat() if supplier.updated_at else None,
+    }
+
+
 def _serialize_stock_alert(alert: ProductStockAlert) -> dict:
     product = alert.product
     return {
@@ -414,11 +502,13 @@ def _serialize_user_brief(user: User) -> dict:
 
 
 def _serialize_delivery_agent_brief(agent: DeliveryAgent) -> dict:
+    active_assignments = Order.query.filter_by(delivery_agent_id=agent.id).count()
     return {
         "id": agent.id,
         "display_name": agent.display_name,
         "phone_number": agent.phone_number,
         "is_active": agent.is_active,
+        "active_assignments": active_assignments,
     }
 
 
@@ -449,6 +539,84 @@ def _serialize_vendor_profile_brief(vendor: Vendor | None) -> dict | None:
         "support_email": vendor.support_email,
         "status": vendor.status.value,
         "is_verified": vendor.is_verified,
+    }
+
+
+def _serialize_vendor_product_activity_item(product: Product) -> dict:
+    return {
+        "id": product.id,
+        "name": product.name,
+        "slug": product.slug,
+        "sku": product.sku,
+        "stock_quantity": product.stock_quantity,
+        "is_active": product.is_active,
+        "created_at": product.created_at.isoformat() if product.created_at else None,
+    }
+
+
+def _serialize_vendor_order_activity_item(order: Order) -> dict:
+    return {
+        "id": order.id,
+        "order_number": order.order_number,
+        "status": order.status.value,
+        "delivery_status": order.delivery_status,
+        "total_amount": order.total_amount_value,
+        "currency": order.currency,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+    }
+
+
+def _serialize_vendor_detail(vendor: Vendor) -> dict:
+    products = sorted(
+        vendor.products or [],
+        key=lambda item: (item.created_at or datetime.min.replace(tzinfo=timezone.utc), item.id),
+        reverse=True,
+    )
+    product_ids = [product.id for product in products]
+    order_items = []
+    if product_ids:
+        order_items = (
+            OrderItem.query.filter(OrderItem.product_id.in_(product_ids))
+            .order_by(OrderItem.created_at.desc(), OrderItem.id.desc())
+            .all()
+        )
+
+    order_map: dict[int, Order] = {}
+    for item in order_items:
+        if item.order is not None and item.order.id not in order_map:
+            order_map[item.order.id] = item.order
+    orders = sorted(
+        order_map.values(),
+        key=lambda item: (item.created_at or datetime.min.replace(tzinfo=timezone.utc), item.id),
+        reverse=True,
+    )
+
+    reviews = []
+    for product in products:
+        reviews.extend(product.reviews or [])
+
+    return {
+        **_serialize_vendor_profile_brief(vendor),
+        "description": vendor.description,
+        "created_at": vendor.created_at.isoformat() if vendor.created_at else None,
+        "updated_at": vendor.updated_at.isoformat() if vendor.updated_at else None,
+        "user": _serialize_user_brief(vendor.user) if vendor.user is not None else None,
+        "kyc_submission": (
+            serialize_vendor_kyc_submission(vendor.kyc_submission)
+            if vendor.kyc_submission is not None
+            else None
+        ),
+        "metrics": {
+            "products": len(products),
+            "active_products": sum(1 for product in products if product.is_active),
+            "low_stock_products": sum(
+                1 for product in products if product.stock_quantity <= product.low_stock_threshold
+            ),
+            "orders": len(orders),
+            "reviews": len(reviews),
+        },
+        "recent_products": [_serialize_vendor_product_activity_item(product) for product in products[:5]],
+        "recent_orders": [_serialize_vendor_order_activity_item(order) for order in orders[:5]],
     }
 
 
@@ -1094,6 +1262,16 @@ def list_vendors():
             ]
         }
     )
+
+
+@admin_bp.get("/vendors/<int:vendor_id>")
+@role_required(UserRole.ADMIN.value)
+def get_vendor_detail(vendor_id: int):
+    vendor = db.session.get(Vendor, vendor_id)
+    if vendor is None:
+        return _not_found("Vendor not found.")
+
+    return jsonify({"item": _serialize_vendor_detail(vendor)})
 
 
 @admin_bp.patch("/vendors/<int:vendor_id>/status")
@@ -2593,6 +2771,111 @@ def list_delivery_agents():
     return jsonify({"items": [_serialize_delivery_agent_brief(agent) for agent in agents]})
 
 
+@admin_bp.get("/shipping/zones")
+@role_required(UserRole.ADMIN.value)
+def list_shipping_zones():
+    zones = DeliveryZone.query.order_by(DeliveryZone.city.asc(), DeliveryZone.id.asc()).all()
+    return jsonify({"items": [_serialize_delivery_zone(zone) for zone in zones]})
+
+
+@admin_bp.post("/shipping/zones")
+@role_required(UserRole.ADMIN.value)
+def create_shipping_zone():
+    payload = validate_delivery_zone_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    existing_name = DeliveryZone.query.filter(DeliveryZone.name.ilike(payload["name"])).first()
+    if existing_name is not None:
+        return validation_error({"name": "A delivery zone with this name already exists."})
+
+    existing_city = DeliveryZone.query.filter(DeliveryZone.city.ilike(payload["city"])).first()
+    if existing_city is not None:
+        return validation_error({"city": "A delivery zone for this city already exists."})
+
+    zone = DeliveryZone(**payload)
+    db.session.add(zone)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.shipping_zone_created",
+        entity_type="delivery_zone",
+        entity_id=zone.id,
+        metadata={"name": zone.name, "city": zone.city},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_delivery_zone(zone)}), 201
+
+
+@admin_bp.patch("/shipping/zones/<int:zone_id>")
+@role_required(UserRole.ADMIN.value)
+def update_shipping_zone(zone_id: int):
+    payload = validate_delivery_zone_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    zone = db.session.get(DeliveryZone, zone_id)
+    if zone is None:
+        return _not_found("Delivery zone not found.")
+
+    if "name" in payload["provided_fields"]:
+        existing_name = DeliveryZone.query.filter(
+            DeliveryZone.id != zone.id,
+            DeliveryZone.name.ilike(payload["name"]),
+        ).first()
+        if existing_name is not None:
+            return validation_error({"name": "A delivery zone with this name already exists."})
+
+    if "city" in payload["provided_fields"]:
+        existing_city = DeliveryZone.query.filter(
+            DeliveryZone.id != zone.id,
+            DeliveryZone.city.ilike(payload["city"]),
+        ).first()
+        if existing_city is not None:
+            return validation_error({"city": "A delivery zone for this city already exists."})
+
+    for field in ("name", "city", "fee", "estimated_days_min", "estimated_days_max", "is_active"):
+        if field in payload["provided_fields"]:
+            setattr(zone, field, payload[field])
+
+    _add_audit_log(
+        action="admin.shipping_zone_updated",
+        entity_type="delivery_zone",
+        entity_id=zone.id,
+        metadata={"name": zone.name, "city": zone.city, "is_active": zone.is_active},
+    )
+    db.session.commit()
+    return jsonify({"item": _serialize_delivery_zone(zone)})
+
+
+@admin_bp.delete("/shipping/zones/<int:zone_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_shipping_zone(zone_id: int):
+    zone = db.session.get(DeliveryZone, zone_id)
+    if zone is None:
+        return _not_found("Delivery zone not found.")
+
+    order_count = Order.query.filter_by(delivery_zone_name=zone.name).count()
+    if order_count:
+        return validation_error({"zone": "This delivery zone is already referenced by orders and cannot be deleted."})
+
+    _add_audit_log(
+        action="admin.shipping_zone_deleted",
+        entity_type="delivery_zone",
+        entity_id=zone.id,
+        metadata={"name": zone.name, "city": zone.city},
+    )
+    db.session.delete(zone)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@admin_bp.get("/shipping/orders")
+@role_required(UserRole.ADMIN.value)
+def list_shipping_orders():
+    orders = Order.query.order_by(Order.created_at.desc(), Order.id.desc()).all()
+    return jsonify({"items": [serialize_order(order, include_items=True) for order in orders]})
+
+
 @admin_bp.get("/promo-codes")
 @role_required(UserRole.ADMIN.value)
 def list_promo_codes():
@@ -2949,8 +3232,97 @@ def list_audit_logs():
       200:
         description: Audit log list.
     """
-    audit_logs = AuditLog.query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).all()
-    return jsonify({"items": [serialize_audit_log(audit_log) for audit_log in audit_logs]})
+    query = AuditLog.query
+
+    search = str(request.args.get("q") or "").strip().lower()
+    event_type = str(request.args.get("event_type") or "").strip().lower()
+    actor_email = str(request.args.get("actor_email") or "").strip().lower()
+    target_type = str(request.args.get("target_type") or "").strip().lower()
+    target_id = str(request.args.get("target_id") or "").strip()
+    path = str(request.args.get("path") or "").strip().lower()
+    status = str(request.args.get("status") or "").strip().lower()
+    date_from = str(request.args.get("date_from") or "").strip()
+    date_to = str(request.args.get("date_to") or "").strip()
+
+    page = request.args.get("page", default=1, type=int) or 1
+    page_size = request.args.get("page_size", default=50, type=int) or 50
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 200)
+
+    if event_type:
+        query = query.filter(AuditLog.action.ilike(f"%{event_type}%"))
+
+    if target_type:
+        query = query.filter(AuditLog.entity_type.ilike(f"%{target_type}%"))
+
+    if target_id:
+        try:
+            query = query.filter(AuditLog.entity_id == int(target_id))
+        except ValueError:
+            return validation_error({"target_id": "target_id must be an integer."})
+
+    if actor_email:
+        query = query.join(AuditLog.actor_user).filter(User.email.ilike(f"%{actor_email}%"))
+
+    if date_from:
+        try:
+            parsed_from = datetime.fromisoformat(date_from)
+            query = query.filter(AuditLog.created_at >= parsed_from)
+        except ValueError:
+            return validation_error({"date_from": "date_from must be a valid ISO date."})
+
+    if date_to:
+        try:
+            parsed_to = datetime.fromisoformat(date_to)
+            query = query.filter(AuditLog.created_at <= parsed_to)
+        except ValueError:
+            return validation_error({"date_to": "date_to must be a valid ISO date."})
+
+    audit_logs = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).all()
+    items = [serialize_audit_log(audit_log) for audit_log in audit_logs]
+
+    if search:
+        items = [
+            item for item in items
+            if search in item["event_type"].lower()
+            or search in (item["actor_email"] or "").lower()
+            or search in (item["target_type"] or "").lower()
+            or search in (item["target_repr"] or "").lower()
+            or search in (item["message"] or "").lower()
+        ]
+
+    if path:
+        items = [item for item in items if path in (item["path"] or "").lower()]
+
+    if status:
+        items = [item for item in items if (item["status"] or "").lower() == status]
+
+    total = len(items)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paged_items = items[start:end]
+    num_pages = max((total + page_size - 1) // page_size, 1)
+
+    return jsonify({
+        "results": paged_items,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "num_pages": num_pages,
+            "has_next": page < num_pages,
+        },
+    })
+
+
+@admin_bp.get("/audit-logs/<int:audit_log_id>")
+@role_required(UserRole.ADMIN.value)
+def get_audit_log_detail(audit_log_id: int):
+    audit_log = db.session.get(AuditLog, audit_log_id)
+    if audit_log is None:
+        return _not_found("Audit log not found.")
+
+    return jsonify({"audit_log": serialize_audit_log(audit_log)})
 
 
 @admin_bp.get("/banners")
@@ -3318,3 +3690,294 @@ def update_refund_status(refund_id: int):
     notify_refund_updated(refund)
     db.session.commit()
     return jsonify({"item": serialize_refund(refund)})
+
+
+@admin_bp.get("/partners")
+@role_required(UserRole.ADMIN.value)
+def list_partners():
+    page = request.args.get("page", 1)
+    page_size = request.args.get("page_size", 200)
+
+    page, page_error = parse_positive_int(page, field_name="page")
+    if page_error:
+        return validation_error(page_error)
+
+    page_size, page_size_error = parse_positive_int(page_size, field_name="page_size")
+    if page_size_error:
+        return validation_error(page_size_error)
+
+    query = Partner.query.order_by(Partner.name.asc(), Partner.id.asc())
+    pagination = query.paginate(page=page, per_page=page_size, error_out=False)
+    items = [_serialize_partner(partner) for partner in pagination.items]
+    return jsonify(
+        {
+            "results": items,
+            "pagination": {
+                "page": pagination.page,
+                "page_size": pagination.per_page,
+                "total": pagination.total,
+                "num_pages": pagination.pages,
+                "has_next": pagination.has_next,
+            },
+        }
+    )
+
+
+@admin_bp.post("/partners")
+@role_required(UserRole.ADMIN.value)
+def create_partner():
+    payload = validate_partner_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    existing_name = Partner.query.filter(Partner.name.ilike(payload["name"])).first()
+    if existing_name:
+        return validation_error({"name": "A partner with this name already exists."})
+
+    if payload["code"]:
+        existing_code = Partner.query.filter(Partner.code.ilike(payload["code"])).first()
+        if existing_code:
+            return validation_error({"code": "A partner with this code already exists."})
+
+    partner = Partner(name=payload["name"], code=payload["code"])
+    db.session.add(partner)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.partner_created",
+        entity_type="partner",
+        entity_id=partner.id,
+        metadata={"name": partner.name, "code": partner.code},
+    )
+    db.session.commit()
+    return jsonify({"partner": _serialize_partner(partner)}), 201
+
+
+@admin_bp.patch("/partners/<int:partner_id>")
+@role_required(UserRole.ADMIN.value)
+def update_partner(partner_id: int):
+    partner = db.session.get(Partner, partner_id)
+    if partner is None:
+        return _not_found("Partner not found.")
+
+    payload = validate_partner_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    if "name" in payload["provided_fields"]:
+        existing_name = (
+            Partner.query.filter(Partner.id != partner.id, Partner.name.ilike(payload["name"])).first()
+        )
+        if existing_name:
+            return validation_error({"name": "A partner with this name already exists."})
+        partner.name = payload["name"]
+
+    if "code" in payload["provided_fields"]:
+        if payload["code"]:
+            existing_code = (
+                Partner.query.filter(Partner.id != partner.id, Partner.code.ilike(payload["code"])).first()
+            )
+            if existing_code:
+                return validation_error({"code": "A partner with this code already exists."})
+        partner.code = payload["code"]
+
+    _add_audit_log(
+        action="admin.partner_updated",
+        entity_type="partner",
+        entity_id=partner.id,
+        metadata={"name": partner.name, "code": partner.code},
+    )
+    db.session.commit()
+    return jsonify({"partner": _serialize_partner(partner)})
+
+
+@admin_bp.delete("/partners/<int:partner_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_partner(partner_id: int):
+    partner = db.session.get(Partner, partner_id)
+    if partner is None:
+        return _not_found("Partner not found.")
+
+    if partner.users:
+        return validation_error({"partner": "Unlink all users before deleting this partner."})
+
+    metadata = {"name": partner.name, "code": partner.code}
+    db.session.delete(partner)
+    _add_audit_log(
+        action="admin.partner_deleted",
+        entity_type="partner",
+        entity_id=partner_id,
+        metadata=metadata,
+    )
+    db.session.commit()
+    return jsonify({"message": "Partner deleted successfully."})
+
+
+@admin_bp.get("/partners/<int:partner_id>/users")
+@role_required(UserRole.ADMIN.value)
+def list_partner_users(partner_id: int):
+    partner = db.session.get(Partner, partner_id)
+    if partner is None:
+        return _not_found("Partner not found.")
+
+    users = sorted(partner.users, key=lambda user: (user.full_name.lower(), user.id))
+    return jsonify({"results": [_serialize_partner_user(user) for user in users]})
+
+
+@admin_bp.post("/partners/<int:partner_id>/users/<int:user_id>/link")
+@role_required(UserRole.ADMIN.value)
+def link_partner_user(partner_id: int, user_id: int):
+    partner = db.session.get(Partner, partner_id)
+    if partner is None:
+        return _not_found("Partner not found.")
+
+    user = db.session.get(User, user_id)
+    if user is None:
+        return _not_found("User not found.")
+
+    if all(existing_user.id != user.id for existing_user in partner.users):
+        partner.users.append(user)
+
+    _add_audit_log(
+        action="admin.partner_user_linked",
+        entity_type="partner",
+        entity_id=partner.id,
+        metadata={"user_id": user.id, "user_email": user.email},
+    )
+    db.session.commit()
+    return jsonify({"partner": _serialize_partner(partner)})
+
+
+@admin_bp.delete("/partners/<int:partner_id>/users/<int:user_id>/unlink")
+@role_required(UserRole.ADMIN.value)
+def unlink_partner_user(partner_id: int, user_id: int):
+    partner = db.session.get(Partner, partner_id)
+    if partner is None:
+        return _not_found("Partner not found.")
+
+    user = db.session.get(User, user_id)
+    if user is None:
+        return _not_found("User not found.")
+
+    if all(existing_user.id != user.id for existing_user in partner.users):
+        return validation_error({"user": "Selected user is not linked to this partner."})
+
+    partner.users = [existing_user for existing_user in partner.users if existing_user.id != user.id]
+    _add_audit_log(
+        action="admin.partner_user_unlinked",
+        entity_type="partner",
+        entity_id=partner.id,
+        metadata={"user_id": user.id, "user_email": user.email},
+    )
+    db.session.commit()
+    return jsonify({"partner": _serialize_partner(partner)})
+
+
+@admin_bp.get("/suppliers")
+@role_required(UserRole.ADMIN.value)
+def list_suppliers():
+    status_filter = str(request.args.get("status", "")).strip().lower()
+    query = Supplier.query.order_by(Supplier.created_at.desc(), Supplier.id.desc())
+    if status_filter:
+        allowed_statuses = {status.value for status in SupplierStatus}
+        if status_filter not in allowed_statuses:
+            return validation_error({"status": "status must be a supported supplier status."})
+        query = query.filter(Supplier.status == SupplierStatus(status_filter))
+    return jsonify({"results": [_serialize_supplier(supplier) for supplier in query.all()]})
+
+
+@admin_bp.post("/suppliers")
+@role_required(UserRole.ADMIN.value)
+def create_supplier():
+    payload = validate_supplier_create_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    user = db.session.get(User, payload["user_id"])
+    if user is None:
+        return validation_error({"user_id": "Selected user was not found."})
+
+    if Supplier.query.filter_by(user_id=user.id).first() is not None:
+        return validation_error({"user_id": "This user already has a supplier profile."})
+
+    partner = None
+    if payload["partner_id"] is not None:
+        partner = db.session.get(Partner, payload["partner_id"])
+        if partner is None:
+            return validation_error({"partner_id": "Selected partner was not found."})
+
+    supplier = Supplier(
+        user_id=user.id,
+        partner_id=partner.id if partner else None,
+        company_name=payload["company_name"],
+        contact_name=payload["contact_name"],
+        phone=payload["phone"],
+        country_code=payload["country_code"],
+        website=payload["website"],
+        notes=payload["notes"],
+        status=SupplierStatus(payload["status"]),
+    )
+    db.session.add(supplier)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.supplier_created",
+        entity_type="supplier",
+        entity_id=supplier.id,
+        metadata={
+            "company_name": supplier.company_name,
+            "status": supplier.status.value if hasattr(supplier.status, "value") else supplier.status,
+            "partner_id": supplier.partner_id,
+            "user_id": supplier.user_id,
+        },
+    )
+    db.session.commit()
+    return jsonify({"supplier": _serialize_supplier(supplier)}), 201
+
+
+@admin_bp.get("/suppliers/<int:supplier_id>")
+@role_required(UserRole.ADMIN.value)
+def get_supplier(supplier_id: int):
+    supplier = db.session.get(Supplier, supplier_id)
+    if supplier is None:
+        return _not_found("Supplier not found.")
+    return jsonify({"supplier": _serialize_supplier(supplier)})
+
+
+@admin_bp.patch("/suppliers/<int:supplier_id>")
+@role_required(UserRole.ADMIN.value)
+def update_supplier(supplier_id: int):
+    supplier = db.session.get(Supplier, supplier_id)
+    if supplier is None:
+        return _not_found("Supplier not found.")
+
+    payload = validate_supplier_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    if "status" in payload["provided_fields"]:
+        supplier.status = SupplierStatus(payload["status"])
+    if "company_name" in payload["provided_fields"]:
+        supplier.company_name = payload["company_name"]
+    if "contact_name" in payload["provided_fields"]:
+        supplier.contact_name = payload["contact_name"]
+    if "phone" in payload["provided_fields"]:
+        supplier.phone = payload["phone"]
+    if "country_code" in payload["provided_fields"]:
+        supplier.country_code = payload["country_code"]
+    if "website" in payload["provided_fields"]:
+        supplier.website = payload["website"]
+    if "notes" in payload["provided_fields"]:
+        supplier.notes = payload["notes"]
+
+    _add_audit_log(
+        action="admin.supplier_updated",
+        entity_type="supplier",
+        entity_id=supplier.id,
+        metadata={
+            "company_name": supplier.company_name,
+            "status": supplier.status.value if hasattr(supplier.status, "value") else supplier.status,
+            "partner_id": supplier.partner_id,
+            "user_id": supplier.user_id,
+        },
+    )
+    db.session.commit()
+    return jsonify({"supplier": _serialize_supplier(supplier)})

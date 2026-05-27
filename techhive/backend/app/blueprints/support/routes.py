@@ -6,6 +6,7 @@ from app.blueprints.support.schemas import serialize_support_ticket, validate_su
 from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.models import SupportTicket
+from app.services.audit_service import log_request_audit_event
 from app.services.major_notification_service import notify_support_ticket_created
 from app.utils.api import get_json_payload
 
@@ -29,6 +30,17 @@ def create_support_ticket():
     ticket = SupportTicket(user_id=user_id, **payload)
     db.session.add(ticket)
     db.session.flush()
+    audit_log = log_request_audit_event(
+        actor_user_id=user_id,
+        action="customer.support_ticket_created",
+        entity_type="support_ticket",
+        entity_id=ticket.id,
+        message="Customer created a support ticket.",
+        target_repr=ticket.subject,
+        metadata={"category": ticket.category, "email": ticket.email},
+    )
+    if audit_log is not None:
+        db.session.add(audit_log)
     notify_support_ticket_created(ticket)
     db.session.commit()
     return jsonify({"item": serialize_support_ticket(ticket)}), 201

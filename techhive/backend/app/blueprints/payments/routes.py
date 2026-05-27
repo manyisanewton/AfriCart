@@ -12,6 +12,7 @@ from app.blueprints.payments.webhooks import (
 from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.models import Order, Payment, PaymentMethod
+from app.services.audit_service import log_request_audit_event
 from app.services.payment_service import (
     apply_failed_state,
     apply_paid_state,
@@ -49,6 +50,17 @@ def create_payment():
             return validation_error(error.details or {"payment": error.message})
         return jsonify({"error": {"code": error.code, "message": error.message}}), error.status_code
 
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.payment_created",
+            entity_type="payment",
+            entity_id=payment.id,
+            message="Customer initiated a payment.",
+            target_repr=payment.reference,
+            metadata={"order_id": payment.order_id, "method": payment.method.value, "status": payment.status.value},
+        )
+    )
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)}), status_code
 
@@ -99,6 +111,17 @@ def mark_payment_paid(payment_id: int):
         )
     except ValueError as exc:
         return jsonify({"error": {"code": "invalid_payment_transition", "message": str(exc)}}), 400
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.payment_marked_paid",
+            entity_type="payment",
+            entity_id=payment.id,
+            message="Customer marked a payment as paid in local development flow.",
+            target_repr=payment.reference,
+            metadata={"order_id": payment.order_id, "status": payment.status.value},
+        )
+    )
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)})
 
@@ -128,6 +151,17 @@ def mark_payment_failed(payment_id: int):
         )
     except ValueError as exc:
         return jsonify({"error": {"code": "invalid_payment_transition", "message": str(exc)}}), 400
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.payment_marked_failed",
+            entity_type="payment",
+            entity_id=payment.id,
+            message="Customer marked a payment as failed in local development flow.",
+            target_repr=payment.reference,
+            metadata={"order_id": payment.order_id, "status": payment.status.value},
+        )
+    )
     db.session.commit()
     return jsonify({"item": serialize_payment(payment)})
 

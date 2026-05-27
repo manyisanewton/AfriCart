@@ -4,6 +4,7 @@ from datetime import datetime
 from app.models import (
     OrderStatus,
     RefundStatus,
+    SupplierStatus,
     SupportTicketStatus,
     UserRole,
     VendorKYCStatus,
@@ -119,6 +120,106 @@ def validate_stock_alert_status_payload(payload: dict | None) -> dict:
     if status not in allowed_statuses:
         return {"errors": {"status": "status must be either 'open' or 'closed'."}}
     return {"status": status}
+
+
+def validate_supplier_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    allowed_fields = {
+        "status",
+        "company_name",
+        "contact_name",
+        "phone",
+        "country_code",
+        "website",
+        "notes",
+    }
+    provided_fields = {field for field in allowed_fields if field in data}
+    if not provided_fields:
+        return {"errors": {"supplier": "At least one supplier field must be provided."}}
+
+    normalized = {"provided_fields": provided_fields}
+    errors = {}
+
+    if "status" in provided_fields:
+        status = str(data.get("status", "")).strip().lower()
+        allowed_statuses = {status.value for status in SupplierStatus}
+        if status not in allowed_statuses:
+            errors["status"] = "status must be a supported supplier status."
+        else:
+            normalized["status"] = status
+
+    if "company_name" in provided_fields:
+        company_name = str(data.get("company_name", "")).strip()
+        if not company_name:
+            errors["company_name"] = "company_name cannot be blank."
+        else:
+            normalized["company_name"] = company_name
+
+    if "contact_name" in provided_fields:
+        normalized["contact_name"] = str(data.get("contact_name") or "").strip() or None
+
+    if "phone" in provided_fields:
+        normalized["phone"] = str(data.get("phone") or "").strip() or None
+
+    if "country_code" in provided_fields:
+        normalized["country_code"] = str(data.get("country_code") or "").strip().upper() or None
+
+    if "website" in provided_fields:
+        normalized["website"] = str(data.get("website") or "").strip() or None
+
+    if "notes" in provided_fields:
+        normalized["notes"] = str(data.get("notes") or "").strip() or None
+
+    if errors:
+        return {"errors": errors}
+    return normalized
+
+
+def validate_supplier_create_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    errors = {}
+
+    try:
+        user_id = int(data.get("user_id"))
+        if user_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors["user_id"] = "user_id must be a positive integer."
+        user_id = None
+
+    partner_id = data.get("partner_id")
+    normalized_partner_id = None
+    if partner_id not in (None, "", 0):
+        try:
+            normalized_partner_id = int(partner_id)
+            if normalized_partner_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors["partner_id"] = "partner_id must be a positive integer."
+
+    company_name = str(data.get("company_name", "")).strip()
+    if not company_name:
+        errors["company_name"] = "company_name is required."
+
+    status = str(data.get("status", "pending")).strip().lower()
+    allowed_statuses = {status.value for status in SupplierStatus}
+    if status not in allowed_statuses:
+        errors["status"] = "status must be a supported supplier status."
+
+    if errors:
+        return {"errors": errors}
+
+    return {
+        "user_id": user_id,
+        "partner_id": normalized_partner_id,
+        "company_name": company_name,
+        "contact_name": str(data.get("contact_name") or "").strip() or None,
+        "phone": str(data.get("phone") or "").strip() or None,
+        "country_code": str(data.get("country_code") or "").strip().upper() or None,
+        "website": str(data.get("website") or "").strip() or None,
+        "notes": str(data.get("notes") or "").strip() or None,
+        "status": status,
+    }
 
 
 def _coerce_optional_datetime(value):
@@ -819,6 +920,126 @@ def validate_named_entity_update_payload(payload: dict | None) -> dict:
     return normalized
 
 
+def validate_delivery_zone_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    errors = {}
+
+    name = str(data.get("name", "")).strip()
+    city = str(data.get("city", "")).strip()
+    if not name:
+        errors["name"] = "name is required."
+    if not city:
+        errors["city"] = "city is required."
+
+    try:
+        fee = float(data.get("fee"))
+        if fee < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors["fee"] = "fee must be a non-negative number."
+        fee = None
+
+    try:
+        estimated_days_min = int(data.get("estimated_days_min"))
+        if estimated_days_min <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors["estimated_days_min"] = "estimated_days_min must be a positive integer."
+        estimated_days_min = None
+
+    try:
+        estimated_days_max = int(data.get("estimated_days_max"))
+        if estimated_days_max <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors["estimated_days_max"] = "estimated_days_max must be a positive integer."
+        estimated_days_max = None
+
+    if (
+        estimated_days_min is not None
+        and estimated_days_max is not None
+        and estimated_days_max < estimated_days_min
+    ):
+        errors["estimated_days_max"] = "estimated_days_max must be greater than or equal to estimated_days_min."
+
+    if errors:
+        return {"errors": errors}
+
+    return {
+        "name": name,
+        "city": city,
+        "fee": fee,
+        "estimated_days_min": estimated_days_min,
+        "estimated_days_max": estimated_days_max,
+        "is_active": bool(data.get("is_active", True)),
+    }
+
+
+def validate_delivery_zone_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    allowed_fields = {"name", "city", "fee", "estimated_days_min", "estimated_days_max", "is_active"}
+    provided_fields = {field for field in allowed_fields if field in data}
+    errors = {}
+
+    if not provided_fields:
+        return {"errors": {"resource": "At least one field must be provided."}}
+
+    normalized = {"provided_fields": provided_fields}
+
+    if "name" in provided_fields:
+        name = str(data.get("name", "")).strip()
+        if not name:
+            errors["name"] = "name cannot be blank."
+        else:
+            normalized["name"] = name
+
+    if "city" in provided_fields:
+        city = str(data.get("city", "")).strip()
+        if not city:
+            errors["city"] = "city cannot be blank."
+        else:
+            normalized["city"] = city
+
+    if "fee" in provided_fields:
+        try:
+            fee = float(data.get("fee"))
+            if fee < 0:
+                raise ValueError
+            normalized["fee"] = fee
+        except (TypeError, ValueError):
+            errors["fee"] = "fee must be a non-negative number."
+
+    if "estimated_days_min" in provided_fields:
+        try:
+            estimated_days_min = int(data.get("estimated_days_min"))
+            if estimated_days_min <= 0:
+                raise ValueError
+            normalized["estimated_days_min"] = estimated_days_min
+        except (TypeError, ValueError):
+            errors["estimated_days_min"] = "estimated_days_min must be a positive integer."
+
+    if "estimated_days_max" in provided_fields:
+        try:
+            estimated_days_max = int(data.get("estimated_days_max"))
+            if estimated_days_max <= 0:
+                raise ValueError
+            normalized["estimated_days_max"] = estimated_days_max
+        except (TypeError, ValueError):
+            errors["estimated_days_max"] = "estimated_days_max must be a positive integer."
+
+    min_days = normalized.get("estimated_days_min")
+    max_days = normalized.get("estimated_days_max")
+    if min_days is not None and max_days is not None and max_days < min_days:
+        errors["estimated_days_max"] = "estimated_days_max must be greater than or equal to estimated_days_min."
+
+    if "is_active" in provided_fields:
+        normalized["is_active"] = bool(data.get("is_active"))
+
+    if errors:
+        return {"errors": errors}
+    return normalized
+
+
 def validate_product_active_payload(payload: dict | None) -> dict:
     data = payload or {}
     if "is_active" not in data:
@@ -1345,6 +1566,45 @@ def validate_user_active_payload(payload: dict | None) -> dict:
     if "is_active" not in data:
         return {"errors": {"is_active": "is_active is required."}}
     return {"is_active": bool(data.get("is_active"))}
+
+
+def validate_partner_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    name = str(data.get("name", "")).strip()
+    code = str(data.get("code") or "").strip() or None
+
+    if not name:
+        return {"errors": {"name": "name is required."}}
+
+    return {
+        "name": name,
+        "code": code,
+    }
+
+
+def validate_partner_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    allowed_fields = {"name", "code"}
+    provided_fields = {field for field in allowed_fields if field in data}
+    if not provided_fields:
+        return {"errors": {"partner": "At least one partner field must be provided."}}
+
+    normalized = {"provided_fields": provided_fields}
+    errors = {}
+
+    if "name" in provided_fields:
+        name = str(data.get("name", "")).strip()
+        if not name:
+            errors["name"] = "name cannot be blank."
+        else:
+            normalized["name"] = name
+
+    if "code" in provided_fields:
+        normalized["code"] = str(data.get("code") or "").strip() or None
+
+    if errors:
+        return {"errors": errors}
+    return normalized
 
 
 def validate_admin_user_create_payload(payload: dict | None) -> dict:

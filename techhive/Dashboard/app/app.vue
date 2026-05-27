@@ -40,20 +40,6 @@ async function handleLogout() {
       <div class="min-h-screen lg:pl-64">
         <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
           <div class="flex h-18 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-            <NuxtLink to="/" class="flex items-center gap-3">
-              <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#255be8] text-base font-black text-white">
-                TH
-              </div>
-              <div>
-                <p class="text-lg font-black leading-tight">
-                  {{ dashboardName }}
-                </p>
-                <p class="text-xs text-slate-500">
-                  {{ dashboardSubtitle }}
-                </p>
-              </div>
-            </NuxtLink>
-
             <UInput
               v-model="searchQuery"
               class="hidden max-w-xl flex-1 md:block"
@@ -63,6 +49,8 @@ async function handleLogout() {
               icon="i-lucide-search"
               placeholder="Search dashboard..."
             />
+
+            <div class="hidden flex-1 md:block" />
 
             <div class="flex items-center gap-2">
               <UButton icon="i-lucide-bell" color="neutral" variant="ghost" />

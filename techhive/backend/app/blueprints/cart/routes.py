@@ -13,6 +13,7 @@ from app.blueprints.products.schemas import serialize_product
 from app.extensions import db
 from app.middleware.auth_required import auth_required
 from app.models import CartItem, Product, WishlistItem
+from app.services.audit_service import log_request_audit_event
 
 
 def _cart_item_payload(item: CartItem) -> dict:
@@ -129,6 +130,18 @@ def add_cart_item():
             )
         item.quantity = new_quantity
 
+    db.session.flush()
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.cart_item_added",
+            entity_type="cart_item",
+            entity_id=item.id,
+            message="Customer added an item to cart.",
+            target_repr=product.name,
+            metadata={"product_id": product.id, "quantity": item.quantity},
+        )
+    )
     db.session.commit()
     return jsonify({"item": _cart_item_payload(item)}), 201
 
@@ -162,6 +175,17 @@ def update_cart_item(item_id: int):
         )
 
     item.quantity = payload["quantity"]
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.cart_item_updated",
+            entity_type="cart_item",
+            entity_id=item.id,
+            message="Customer updated cart quantity.",
+            target_repr=item.product.name,
+            metadata={"product_id": item.product_id, "quantity": item.quantity},
+        )
+    )
     db.session.commit()
     return jsonify({"item": _cart_item_payload(item)})
 
@@ -185,6 +209,17 @@ def delete_cart_item(item_id: int):
             404,
         )
 
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.cart_item_removed",
+            entity_type="cart_item",
+            entity_id=item.id,
+            message="Customer removed an item from cart.",
+            target_repr=item.product.name,
+            metadata={"product_id": item.product_id},
+        )
+    )
     db.session.delete(item)
     db.session.commit()
     return jsonify({"message": "Cart item removed."})
@@ -237,6 +272,18 @@ def add_wishlist_item():
 
     item = WishlistItem(user_id=g.current_user.id, product_id=product.id)
     db.session.add(item)
+    db.session.flush()
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.wishlist_item_added",
+            entity_type="wishlist_item",
+            entity_id=item.id,
+            message="Customer added an item to wishlist.",
+            target_repr=product.name,
+            metadata={"product_id": product.id},
+        )
+    )
     db.session.commit()
     return jsonify({"item": {"id": item.id, "product": serialize_product(product)}}), 201
 
@@ -262,6 +309,17 @@ def delete_wishlist_item(item_id: int):
             404,
         )
 
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.wishlist_item_removed",
+            entity_type="wishlist_item",
+            entity_id=item.id,
+            message="Customer removed an item from wishlist.",
+            target_repr=item.product.name,
+            metadata={"product_id": item.product_id},
+        )
+    )
     db.session.delete(item)
     db.session.commit()
     return jsonify({"message": "Wishlist item removed."})

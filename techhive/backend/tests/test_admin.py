@@ -11,9 +11,11 @@ from app.models import (
     Brand,
     Category,
     DeliveryAgent,
+    DeliveryZone,
     NotificationDelivery,
     NotificationDeliveryStatus,
     Payment,
+    Partner,
     PaymentMethod,
     PaymentStatus,
     PlatformSetting,
@@ -31,9 +33,12 @@ from app.models import (
     ProductType,
     SupportTicket,
     SupportTicketStatus,
+    Supplier,
+    SupplierStatus,
     User,
     UserRole,
     Vendor,
+    VendorKYCSubmission,
     VendorStatus,
 )
 from app.utils.security import hash_password
@@ -228,6 +233,177 @@ def test_admin_can_view_user_detail(client):
     assert payload["metrics"]["support_tickets"] == 1
     assert payload["addresses"][0]["label"] == "Home"
     assert payload["recent_support_tickets"][0]["label"] == "Delivery update"
+
+
+def test_admin_can_manage_partners(client):
+    headers = create_admin_headers(client)
+
+    create_response = client.post(
+        "/api/v1/admin/partners",
+        json={"name": "Fulfillment Circle", "code": "FULFILL-01"},
+        headers=headers,
+    )
+
+    assert create_response.status_code == 201
+    partner_id = create_response.get_json()["partner"]["id"]
+
+    list_response = client.get("/api/v1/admin/partners?page=1&page_size=20", headers=headers)
+
+    assert list_response.status_code == 200
+    assert list_response.get_json()["pagination"]["total"] >= 1
+    assert any(item["id"] == partner_id for item in list_response.get_json()["results"])
+
+    update_response = client.patch(
+        f"/api/v1/admin/partners/{partner_id}",
+        json={"name": "Fulfillment Circle East", "code": "FULFILL-EAST"},
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.get_json()["partner"]["name"] == "Fulfillment Circle East"
+    assert update_response.get_json()["partner"]["code"] == "FULFILL-EAST"
+
+    delete_response = client.delete(f"/api/v1/admin/partners/{partner_id}", headers=headers)
+
+    assert delete_response.status_code == 200
+    assert db.session.get(Partner, partner_id) is None
+
+
+def test_admin_can_link_and_unlink_partner_users(client):
+    headers = create_admin_headers(client)
+    customer_headers = create_customer_headers(
+        client,
+        email="partner-user@example.com",
+        phone="+254777009999",
+    )
+    del customer_headers
+
+    partner = Partner(name="Ops Partner", code="OPS-PARTNER")
+    db.session.add(partner)
+    db.session.commit()
+
+    user = User.query.filter_by(email="partner-user@example.com").first()
+
+    link_response = client.post(
+        f"/api/v1/admin/partners/{partner.id}/users/{user.id}/link",
+        headers=headers,
+    )
+
+    assert link_response.status_code == 200
+    assert link_response.get_json()["partner"]["user_count"] == 1
+
+    users_response = client.get(f"/api/v1/admin/partners/{partner.id}/users", headers=headers)
+
+    assert users_response.status_code == 200
+    assert users_response.get_json()["results"][0]["email"] == user.email
+
+    unlink_response = client.delete(
+        f"/api/v1/admin/partners/{partner.id}/users/{user.id}/unlink",
+        headers=headers,
+    )
+
+    assert unlink_response.status_code == 200
+    assert unlink_response.get_json()["partner"]["user_count"] == 0
+
+
+def create_supplier_fixture(*, user: User, partner: Partner | None = None):
+    supplier = Supplier(
+        user_id=user.id,
+        partner_id=partner.id if partner else None,
+        company_name="Northwind Supply Co",
+        contact_name="Amina Wanjiru",
+        phone="+254700111222",
+        country_code="KE",
+        website="https://northwind.example.com",
+        notes="Priority electronics distributor",
+        status=SupplierStatus.PENDING,
+    )
+    db.session.add(supplier)
+    db.session.commit()
+    return supplier
+
+
+def test_admin_can_list_and_view_suppliers(client):
+    headers = create_admin_headers(client)
+    create_customer_headers(client, email="supplier-user@example.com", phone="+254777008888")
+    user = User.query.filter_by(email="supplier-user@example.com").first()
+    partner = Partner(name="Distribution Hub", code="DIST-HUB")
+    db.session.add(partner)
+    db.session.commit()
+    supplier = create_supplier_fixture(user=user, partner=partner)
+
+    list_response = client.get("/api/v1/admin/suppliers", headers=headers)
+
+    assert list_response.status_code == 200
+    results = list_response.get_json()["results"]
+    assert any(item["id"] == supplier.id for item in results)
+
+    detail_response = client.get(f"/api/v1/admin/suppliers/{supplier.id}", headers=headers)
+
+    assert detail_response.status_code == 200
+    payload = detail_response.get_json()["supplier"]
+    assert payload["company_name"] == supplier.company_name
+    assert payload["partner"]["name"] == partner.name
+    assert payload["user"]["email"] == user.email
+
+
+def test_admin_can_create_supplier(client):
+    headers = create_admin_headers(client)
+    create_customer_headers(client, email="supplier-create@example.com", phone="+254777006666")
+    user = User.query.filter_by(email="supplier-create@example.com").first()
+    partner = Partner(name="Wholesale Link", code="WHOLESALE-LINK")
+    db.session.add(partner)
+    db.session.commit()
+
+    response = client.post(
+        "/api/v1/admin/suppliers",
+        json={
+            "user_id": user.id,
+            "partner_id": partner.id,
+            "company_name": "Metro Supplies",
+            "contact_name": "Caroline Njeri",
+            "phone": "+254700222333",
+            "country_code": "KE",
+            "website": "https://metro.example.com",
+            "notes": "Created from admin onboarding",
+            "status": "pending",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()["supplier"]
+    assert payload["company_name"] == "Metro Supplies"
+    assert payload["partner"]["id"] == partner.id
+    assert payload["user"]["id"] == user.id
+
+
+def test_admin_can_update_supplier(client):
+    headers = create_admin_headers(client)
+    create_customer_headers(client, email="supplier-edit@example.com", phone="+254777007777")
+    user = User.query.filter_by(email="supplier-edit@example.com").first()
+    partner = Partner(name="Supply Mesh", code="SUP-MESH")
+    db.session.add(partner)
+    db.session.commit()
+    supplier = create_supplier_fixture(user=user, partner=partner)
+
+    response = client.patch(
+        f"/api/v1/admin/suppliers/{supplier.id}",
+        json={
+            "status": "approved",
+            "company_name": "Supply Mesh East",
+            "contact_name": "Jane Supplier",
+            "notes": "Approved for Nairobi operations",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()["supplier"]
+    assert payload["status"] == "approved"
+    assert payload["company_name"] == "Supply Mesh East"
+    assert payload["contact_name"] == "Jane Supplier"
+    assert payload["notes"] == "Approved for Nairobi operations"
 
 
 def test_admin_can_create_user(client):
@@ -1478,6 +1654,95 @@ def test_admin_can_approve_vendor(client):
     assert response.status_code == 200
     assert response.get_json()["item"]["status"] == "approved"
     assert response.get_json()["item"]["is_verified"] is True
+
+
+def test_admin_can_view_vendor_detail(client):
+    headers = create_admin_headers(client)
+    vendor_user, vendor = create_vendor_fixture()
+    product = create_product_fixture(vendor)
+    submission = VendorKYCSubmission(
+        vendor_id=vendor.id,
+        legal_business_name="Admin Vendor LLC",
+        registration_number="REG-4455",
+        tax_id="TAX-7788",
+        contact_person_name=vendor_user.full_name,
+        contact_person_id_number="99887766",
+        document_url="https://example.com/vendor-kyc.pdf",
+    )
+    customer_headers = create_customer_headers(client, email="vendor-buyer@example.com", phone="+254777009001")
+    order = complete_purchase_for_user(client, customer_headers, "vendor-buyer@example.com", product.id)
+    db.session.add(submission)
+    db.session.commit()
+
+    response = client.get(f"/api/v1/admin/vendors/{vendor.id}", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.get_json()["item"]
+    assert payload["business_name"] == vendor.business_name
+    assert payload["user"]["email"] == vendor_user.email
+    assert payload["kyc_submission"]["registration_number"] == "REG-4455"
+    assert payload["metrics"]["products"] == 1
+    assert payload["metrics"]["orders"] >= 1
+    assert payload["recent_products"][0]["name"] == product.name
+    assert payload["recent_orders"][0]["order_number"] == order["order_number"]
+
+
+def test_admin_can_manage_shipping_zones(client):
+    headers = create_admin_headers(client)
+
+    create_response = client.post(
+        "/api/v1/admin/shipping/zones",
+        json={
+            "name": "Nairobi Core",
+            "city": "Nairobi",
+            "fee": 450,
+            "estimated_days_min": 1,
+            "estimated_days_max": 2,
+            "is_active": True,
+        },
+        headers=headers,
+    )
+
+    assert create_response.status_code == 201
+    zone_id = create_response.get_json()["item"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/admin/shipping/zones/{zone_id}",
+        json={"fee": 500, "estimated_days_max": 3},
+        headers=headers,
+    )
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["fee"] == "500.00"
+
+    list_response = client.get("/api/v1/admin/shipping/zones", headers=headers)
+    assert list_response.status_code == 200
+    assert len(list_response.get_json()["items"]) >= 1
+
+    delete_response = client.delete(f"/api/v1/admin/shipping/zones/{zone_id}", headers=headers)
+    assert delete_response.status_code == 200
+
+
+def test_admin_can_list_shipping_orders(client):
+    headers = create_admin_headers(client)
+    zone = DeliveryZone(
+        name="Nairobi Core",
+        city="Nairobi",
+        fee=450.00,
+        estimated_days_min=1,
+        estimated_days_max=2,
+        is_active=True,
+    )
+    db.session.add(zone)
+    db.session.commit()
+    order = create_order_fixture(client)
+
+    response = client.get("/api/v1/admin/shipping/orders", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.get_json()["items"]
+    assert len(payload) >= 1
+    assert payload[0]["order_number"] == order["order_number"]
+    assert payload[0]["delivery_zone_name"] == zone.name
 
 
 def test_admin_can_create_category_and_brand(client):

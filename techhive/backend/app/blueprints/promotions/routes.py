@@ -7,6 +7,8 @@ from app.blueprints.promotions import promotions_bp
 from app.blueprints.promotions.helpers import validate_promo_code_for_amount
 from app.middleware.auth_required import auth_required
 from app.models import CartItem, PromoCode
+from app.extensions import db
+from app.services.audit_service import log_request_audit_event
 
 
 @promotions_bp.post("/cart/apply-promo")
@@ -37,6 +39,19 @@ def apply_promo_to_cart():
         return validation_error({"promo_code": error})
 
     total = subtotal - discount
+    entity_id = promo_code.id if promo_code is not None else 0
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.promo_previewed",
+            entity_type="promo_code",
+            entity_id=entity_id,
+            message="Customer previewed a promo code on cart.",
+            target_repr=code,
+            metadata={"subtotal": f"{subtotal:.2f}", "discount_amount": f"{discount:.2f}"},
+        )
+    )
+    db.session.commit()
     return jsonify(
         {
             "item": {

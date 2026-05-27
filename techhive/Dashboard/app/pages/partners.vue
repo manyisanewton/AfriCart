@@ -92,14 +92,20 @@ async function loadPartners() {
 
 async function loadUsers() {
   isLoadingUsers.value = true
-  const result = await getUsers({ pageSize: 50, search: userSearch.value.trim() })
+  const result = await getUsers()
 
   if (result.success) {
     const linkedIds = new Set(partnerUsers.value.map(user => Number(user.id)))
-    userOptions.value = (result.data?.results ?? [])
+    const candidates = result.data?.raw ?? []
+    userOptions.value = candidates
+      .filter((user: any) => {
+        const text = `${user.email || ''} ${user.full_name || ''} ${user.phone_number || ''} ${user.role || ''}`.toLowerCase()
+        const search = userSearch.value.trim().toLowerCase()
+        return !search || text.includes(search) || String(user.id).includes(search)
+      })
       .filter((user: any) => !linkedIds.has(Number(user.id)))
       .map((user: any) => ({
-        label: `#${user.id} ${user.email || user.name || user.username || 'Unnamed user'}`,
+        label: `#${user.id} ${user.email || user.full_name || 'Unnamed user'}`,
         value: Number(user.id),
       }))
   }

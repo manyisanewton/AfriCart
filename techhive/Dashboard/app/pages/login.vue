@@ -52,9 +52,7 @@ async function submit() {
       <div class="hidden min-h-[620px] flex-col justify-between bg-[#0f172a] p-10 text-white md:flex">
         <div>
           <div class="mb-10 flex items-center gap-3">
-            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#3d7cff] text-xl font-black">
-              TH
-            </div>
+            <img src="/logo.png" alt="TechHive" class="h-14 w-auto object-contain" />
             <div>
               <p class="text-xl font-bold leading-tight">
                 {{ dashboardName }}
@@ -103,9 +101,7 @@ async function submit() {
 
       <form class="p-6 sm:p-10 md:p-12" @submit.prevent="submit">
         <div class="mb-9 flex items-center gap-3 md:hidden">
-          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#3d7cff] text-xl font-black text-white">
-            TH
-          </div>
+          <img src="/logo.png" alt="TechHive" class="h-14 w-auto object-contain" />
           <div>
             <p class="text-xl font-bold leading-tight text-slate-950">
               {{ dashboardName }}

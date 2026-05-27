@@ -17,7 +17,9 @@ export interface PartnerPayload {
 }
 
 function readApiError(err: any) {
-  return err?.data?.error?.detail
+  return err?.data?.error?.message
+    || err?.data?.error?.detail
+    || (err?.data?.error?.details && Object.entries(err.data.error.details).map(([field, message]) => `${field}: ${String(message)}`).join(' '))
     || err?.data?.detail
     || err?.message
     || 'Unknown error'
@@ -33,7 +35,7 @@ export function usePartners() {
     error.value = null
 
     try {
-      const result = await request<{ results: PartnerItem[], pagination: any }>('/admin/partners/', {
+      const result = await request<{ results: PartnerItem[], pagination: any }>('/admin/partners', {
         method: 'GET',
         query: {
           page: params.page || 1,
@@ -56,7 +58,7 @@ export function usePartners() {
     error.value = null
 
     try {
-      const result = await request<{ partner: PartnerItem }>('/admin/partners/', {
+      const result = await request<{ partner: PartnerItem }>('/admin/partners', {
         method: 'POST',
         body: payload,
       })
@@ -76,7 +78,7 @@ export function usePartners() {
     error.value = null
 
     try {
-      const result = await request<{ partner: PartnerItem }>(`/admin/partners/${id}/`, {
+      const result = await request<{ partner: PartnerItem }>(`/admin/partners/${id}`, {
         method: 'PATCH',
         body: payload,
       })
@@ -96,7 +98,7 @@ export function usePartners() {
     error.value = null
 
     try {
-      await request(`/admin/partners/${id}/`, { method: 'DELETE' })
+      await request(`/admin/partners/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {
@@ -113,7 +115,7 @@ export function usePartners() {
     error.value = null
 
     try {
-      const result = await request<{ results: PartnerUserItem[] }>(`/admin/partners/${id}/users/`, { method: 'GET' })
+      const result = await request<{ results: PartnerUserItem[] }>(`/admin/partners/${id}/users`, { method: 'GET' })
       return { success: true, data: result.results }
     }
     catch (err: any) {
@@ -130,7 +132,7 @@ export function usePartners() {
     error.value = null
 
     try {
-      const result = await request<{ partner: PartnerItem }>(`/admin/partners/${partnerId}/users/${userId}/link/`, {
+      const result = await request<{ partner: PartnerItem }>(`/admin/partners/${partnerId}/users/${userId}/link`, {
         method: 'POST',
       })
       return { success: true, data: result.partner }
@@ -149,7 +151,7 @@ export function usePartners() {
     error.value = null
 
     try {
-      const result = await request<{ partner: PartnerItem }>(`/admin/partners/${partnerId}/users/${userId}/unlink/`, {
+      const result = await request<{ partner: PartnerItem }>(`/admin/partners/${partnerId}/users/${userId}/unlink`, {
         method: 'DELETE',
       })
       return { success: true, data: result.partner }

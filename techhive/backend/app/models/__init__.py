@@ -18,6 +18,7 @@ from app.models.notification_preference import NotificationPreference
 from app.models.offer import Offer, OfferBenefit, OfferCondition
 from app.models.order import Order, OrderStatus
 from app.models.order_item import OrderItem
+from app.models.partner import Partner, partner_users
 from app.models.payment import Payment, PaymentMethod, PaymentStatus
 from app.models.platform_setting import PlatformSetting
 from app.models.product import Product
@@ -34,6 +35,7 @@ from app.models.refund import Refund, RefundStatus
 from app.models.recommendation_event import RecommendationEvent
 from app.models.review import Review
 from app.models.support_ticket import SupportTicket, SupportTicketStatus
+from app.models.supplier import Supplier, SupplierStatus
 from app.models.user import User, UserRole
 from app.models.vendor import Vendor, VendorStatus
 from app.models.vendor_kyc import VendorKYCStatus, VendorKYCSubmission
@@ -63,6 +65,7 @@ __all__ = [
     "Order",
     "OrderItem",
     "OrderStatus",
+    "Partner",
     "Payment",
     "PaymentMethod",
     "PaymentStatus",
@@ -80,12 +83,15 @@ __all__ = [
     "PromoCode",
     "PromoCodeType",
     "promo_code_offers",
+    "partner_users",
     "Refund",
     "RefundStatus",
     "RecommendationEvent",
     "Review",
     "SupportTicket",
     "SupportTicketStatus",
+    "Supplier",
+    "SupplierStatus",
     "User",
     "UserRole",
     "Vendor",

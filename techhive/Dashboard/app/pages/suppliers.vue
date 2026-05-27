@@ -2,25 +2,46 @@
 import type { SupplierItem, SupplierPayload } from '~/composables/useSuppliers'
 
 const toast = useToast()
-const { getSupplier, getSuppliers, updateSupplier } = useSuppliers()
+const { createSupplier, getSupplier, getSuppliers, updateSupplier } = useSuppliers()
+const { getPartners } = usePartners()
+const { getUsers } = useUser()
+const ALL_STATUSES = '__all__'
+const NO_PARTNER = '__none__'
 
 const suppliers = ref<SupplierItem[]>([])
 const selectedSupplier = ref<SupplierItem | null>(null)
 const searchQuery = ref('')
-const statusFilter = ref('')
+const statusFilter = ref(ALL_STATUSES)
 const isLoading = ref(false)
 const isSaving = ref(false)
 const editorOpen = ref(false)
+const creatorOpen = ref(false)
+const isLoadingCreateOptions = ref(false)
 const saveError = ref('')
+const createError = ref('')
+const partnerOptions = ref<{ label: string, value: number | string }[]>([])
+const userOptions = ref<{ label: string, value: number }[]>([])
 
 const statusOptions = [
-  { label: 'All statuses', value: '' },
+  { label: 'All statuses', value: ALL_STATUSES },
   { label: 'Pending', value: 'pending' },
   { label: 'Approved', value: 'approved' },
   { label: 'Suspended', value: 'suspended' },
 ]
 
 const form = reactive({
+  company_name: '',
+  contact_name: '',
+  phone: '',
+  country_code: '',
+  website: '',
+  notes: '',
+  status: 'pending',
+})
+
+const createForm = reactive({
+  user_id: null as number | null,
+  partner_id: NO_PARTNER as number | string,
   company_name: '',
   contact_name: '',
   phone: '',
@@ -75,9 +96,22 @@ function fillForm(supplier: SupplierItem) {
   form.status = supplier.status || 'pending'
 }
 
+function resetCreateForm() {
+  createError.value = ''
+  createForm.user_id = null
+  createForm.partner_id = NO_PARTNER
+  createForm.company_name = ''
+  createForm.contact_name = ''
+  createForm.phone = ''
+  createForm.country_code = ''
+  createForm.website = ''
+  createForm.notes = ''
+  createForm.status = 'pending'
+}
+
 async function loadSuppliers() {
   isLoading.value = true
-  const result = await getSuppliers({ status: statusFilter.value })
+  const result = await getSuppliers({ status: statusFilter.value === ALL_STATUSES ? '' : statusFilter.value })
 
   if (result.success) {
     suppliers.value = result.data?.results ?? []
@@ -99,6 +133,43 @@ async function loadSuppliers() {
   isLoading.value = false
 }
 
+async function loadCreateOptions() {
+  isLoadingCreateOptions.value = true
+
+  const [partnersResult, usersResult] = await Promise.all([
+    getPartners({ pageSize: 200 }),
+    getUsers(),
+  ])
+
+  if (partnersResult.success) {
+    partnerOptions.value = [
+      { label: 'No partner', value: NO_PARTNER },
+      ...(partnersResult.data?.results ?? []).map(partner => ({
+        label: `${partner.name}${partner.code ? ` (${partner.code})` : ''}`,
+        value: partner.id,
+      })),
+    ]
+  }
+  else {
+    partnerOptions.value = [{ label: 'No partner', value: NO_PARTNER }]
+  }
+
+  if (usersResult.success) {
+    const usedUserIds = new Set(suppliers.value.map(supplier => Number(supplier.user?.id)).filter(Boolean))
+    userOptions.value = (usersResult.data?.raw ?? [])
+      .filter((user: any) => !usedUserIds.has(Number(user.id)))
+      .map((user: any) => ({
+        label: `#${user.id} ${user.email || user.full_name || 'Unnamed user'}`,
+        value: Number(user.id),
+      }))
+  }
+  else {
+    userOptions.value = []
+  }
+
+  isLoadingCreateOptions.value = false
+}
+
 async function openSupplier(supplier: SupplierItem) {
   selectedSupplier.value = supplier
   fillForm(supplier)
@@ -111,6 +182,12 @@ async function openSupplier(supplier: SupplierItem) {
   else if (!result.success) {
     toast.add({ title: 'Could not load supplier detail', description: result.error || 'Please try again.', color: 'error' })
   }
+}
+
+async function openCreator() {
+  resetCreateForm()
+  creatorOpen.value = true
+  await loadCreateOptions()
 }
 
 async function quickStatus(supplier: SupplierItem, status: string) {
@@ -175,6 +252,46 @@ async function submitSupplier() {
   isSaving.value = false
 }
 
+async function submitCreateSupplier() {
+  createError.value = ''
+
+  if (!createForm.user_id) {
+    createError.value = 'User is required.'
+    return
+  }
+  if (!createForm.company_name.trim()) {
+    createError.value = 'Company name is required.'
+    return
+  }
+
+  isSaving.value = true
+  const payload: SupplierPayload = {
+    user_id: createForm.user_id,
+    partner_id: createForm.partner_id === NO_PARTNER ? null : Number(createForm.partner_id),
+    company_name: createForm.company_name.trim(),
+    contact_name: createForm.contact_name.trim(),
+    phone: createForm.phone.trim(),
+    country_code: createForm.country_code.trim().toUpperCase(),
+    website: createForm.website.trim(),
+    notes: createForm.notes.trim(),
+    status: createForm.status,
+  }
+  const result = await createSupplier(payload)
+
+  if (result.success && result.data) {
+    toast.add({ title: 'Supplier created', description: `${result.data.company_name} was created.`, color: 'success' })
+    creatorOpen.value = false
+    await loadSuppliers()
+    await openSupplier(result.data)
+  }
+  else {
+    createError.value = result.error || 'Could not create supplier.'
+    toast.add({ title: 'Create failed', description: createError.value, color: 'error' })
+  }
+
+  isSaving.value = false
+}
+
 watch(statusFilter, loadSuppliers)
 
 onMounted(loadSuppliers)
@@ -201,6 +318,10 @@ onMounted(loadSuppliers)
         <UButton color="neutral" variant="outline" :loading="isLoading" @click="loadSuppliers">
           <UIcon name="i-lucide-refresh-cw" />
           Refresh
+        </UButton>
+        <UButton color="primary" variant="solid" @click="openCreator">
+          <UIcon name="i-lucide-plus" />
+          New Supplier
         </UButton>
       </div>
     </div>
@@ -347,6 +468,45 @@ onMounted(loadSuppliers)
     </div>
 
     <p class="mt-4 text-sm text-slate-500">Showing {{ filteredSuppliers.length }} of {{ suppliers.length }} suppliers.</p>
+
+    <div v-if="creatorOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <UCard class="w-full max-w-4xl">
+        <template #header>
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <h3 class="font-semibold text-default">New supplier</h3>
+              <p class="text-sm text-dimmed">Create a supplier profile and link it to an existing user.</p>
+            </div>
+            <UButton icon="i-lucide-x" color="neutral" variant="ghost" square @click="creatorOpen = false" />
+          </div>
+        </template>
+
+        <div v-if="createError" class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">{{ createError }}</div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <UFormField label="User" required>
+            <USelect v-model="createForm.user_id" :items="userOptions" value-attribute="value" option-attribute="label" :loading="isLoadingCreateOptions" placeholder="Select user" />
+          </UFormField>
+          <UFormField label="Partner">
+            <USelect v-model="createForm.partner_id" :items="partnerOptions" value-attribute="value" option-attribute="label" :loading="isLoadingCreateOptions" placeholder="Select partner" />
+          </UFormField>
+          <UFormField label="Company name" required><UInput v-model="createForm.company_name" autocomplete="off" /></UFormField>
+          <UFormField label="Status"><USelect v-model="createForm.status" :items="statusOptions.slice(1)" /></UFormField>
+          <UFormField label="Contact name"><UInput v-model="createForm.contact_name" autocomplete="off" /></UFormField>
+          <UFormField label="Phone"><UInput v-model="createForm.phone" autocomplete="off" /></UFormField>
+          <UFormField label="Country code"><UInput v-model="createForm.country_code" maxlength="2" autocomplete="off" /></UFormField>
+          <UFormField label="Website"><UInput v-model="createForm.website" type="url" autocomplete="off" /></UFormField>
+          <UFormField label="Notes" class="md:col-span-2"><UTextarea v-model="createForm.notes" :rows="5" /></UFormField>
+        </div>
+
+        <template #footer>
+          <div class="flex justify-end gap-3">
+            <UButton color="neutral" variant="outline" :disabled="isSaving" @click="creatorOpen = false">Cancel</UButton>
+            <UButton color="primary" variant="solid" :loading="isSaving" @click="submitCreateSupplier">Create supplier</UButton>
+          </div>
+        </template>
+      </UCard>
+    </div>
 
     <div v-if="editorOpen && selectedSupplier" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <UCard class="w-full max-w-3xl">

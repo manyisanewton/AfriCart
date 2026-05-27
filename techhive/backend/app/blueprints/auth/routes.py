@@ -17,6 +17,7 @@ from app.middleware.auth_required import auth_required
 from app.middleware.rate_limiter import rate_limit
 from app.models import User
 from app.services.account_service import update_user_profile
+from app.services.audit_service import log_request_audit_event
 from app.services.auth_token_service import resolve_user_from_token
 from app.services.email_service import send_email
 from app.utils.api import get_json_payload
@@ -82,6 +83,18 @@ def register():
         phone_number=phone_number,
     )
     db.session.add(user)
+    db.session.flush()
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=user.id,
+            action="customer.account_registered",
+            entity_type="user",
+            entity_id=user.id,
+            message="Customer account registered from storefront.",
+            target_repr=user.email,
+            metadata={"role": user.role.value},
+        )
+    )
     db.session.commit()
 
     return auth_response(user), 201
@@ -110,6 +123,18 @@ def login():
     if not user.is_active:
         return auth_error("This account is inactive.", 403)
 
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=user.id,
+            action="customer.account_logged_in",
+            entity_type="user",
+            entity_id=user.id,
+            message="Customer logged in from storefront.",
+            target_repr=user.email,
+            metadata={"role": user.role.value},
+        )
+    )
+    db.session.commit()
     return auth_response(user)
 
 
@@ -193,6 +218,16 @@ def change_password():
 
     g.current_user.password_hash = hash_password(payload["new_password"])
     g.current_user.must_change_password = False
+    db.session.add(
+        log_request_audit_event(
+            actor_user_id=g.current_user.id,
+            action="customer.password_changed",
+            entity_type="user",
+            entity_id=g.current_user.id,
+            message="Customer changed account password.",
+            target_repr=g.current_user.email,
+        )
+    )
     db.session.commit()
     return {"message": "Password changed successfully."}
 
