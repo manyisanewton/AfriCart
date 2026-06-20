@@ -1,0 +1,122 @@
+.payment-page {
+  max-width: 460px;
+  margin: 3rem auto;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.payment-page h1 {
+  font-size: 1.5rem;
+  margin-bottom: 1.25rem;
+  color: var(--color-dark);
+}
+
+.payment-page > a {
+  display: inline-block;
+  margin-top: 1rem;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.payment-summary {
+  background: var(--color-light);
+  border: 1px solid #e5e7eb;
+  border-radius: var(--radius-card);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.payment-order-id {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.payment-total {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--color-dark);
+}
+
+.payment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+}
+
+.payment-form label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-dark);
+}
+
+.payment-form input {
+  padding: 0.85rem;
+  border: 1px solid #d1d5db;
+  border-radius: var(--radius-button);
+  font-size: 1.1rem;
+  letter-spacing: 0.5px;
+  text-align: center;
+}
+
+.payment-form input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(26, 86, 219, 0.12);
+}
+
+.payment-error {
+  color: var(--color-danger);
+  font-size: 0.9rem;
+  text-align: center;
+  margin: 0;
+}
+
+.payment-status {
+  color: var(--color-success);
+  font-size: 0.9rem;
+  text-align: center;
+  margin: 0;
+}
+
+.pay-btn {
+  margin-top: 1rem;
+  background: var(--color-success);
+  color: white;
+  padding: 1rem;
+  border: none;
+  border-radius: var(--radius-button);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.pay-btn:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.pay-btn:disabled {
+  background: #95a5a6;
+  cursor: not-allowed;
+}
+
+/* Mobile: full-bleed feel, bigger tap targets */
+@media (max-width: 480px) {
+  .payment-page {
+    margin: 1.5rem auto;
+    padding: 1rem;
+  }
+
+  .payment-total {
+    font-size: 1.4rem;
+  }
+
+  .payment-form input,
+  .pay-btn {
+    font-size: 1rem;
+    padding: 0.9rem;
+  }
+}

@@ -5,6 +5,8 @@ import HomePage from "./pages/HomePage";
 import ProductListingPage from "./pages/ProductListingPage";
 import ProductDetailPage from "./pages/ProductDetailPage";
 import CartPage from "./pages/CartPage";
+import CheckoutPage from './pages/CheckoutPage';
+import PaymentPage from "./pages/PaymentPage";
 import "./styles/alert.css";
 
 function App() {
@@ -47,6 +49,13 @@ function App() {
             path="/cart"
             element={<CartPage cart={cart} setCart={setCart} />}
           />
+
+          <Route
+            path="/checkout"
+            element={<CheckoutPage cart={cart} setCart={setCart} />}
+          />
+          <Route path="/payment" element={<PaymentPage />} />
+
           <Route
             path="/account"
             element={<div style={{ padding: "2rem", textAlign: "center" }}>Account page coming soon</div>} />
