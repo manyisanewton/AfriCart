@@ -33,6 +33,29 @@ def get_user_order(*, user_id: int, order_id: int) -> Order | None:
     return Order.query.filter_by(id=order_id, user_id=user_id).first()
 
 
+def _get_order_for_payment_access(*, user_id: int | None, order_id: int, tracking_token: str | None) -> Order | None:
+    if user_id is not None:
+        return get_user_order(user_id=user_id, order_id=order_id)
+    if tracking_token:
+        return Order.query.filter_by(id=order_id, tracking_token=tracking_token).first()
+    return None
+
+
+def _dispatch_payment_notification(order: Order, *, notification_type: NotificationType, title: str, message: str, email_subject: str, email_context: dict, sms_message: str) -> None:
+    if order.user is None:
+        return
+    dispatch_user_notification(
+        user=order.user,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        email_subject=email_subject,
+        email_template="payment_status",
+        email_context=email_context,
+        sms_message=sms_message,
+    )
+
+
 def get_user_payment(*, user_id: int, payment_id: int) -> Payment | None:
     return (
         Payment.query.join(Order)
@@ -95,35 +118,37 @@ def apply_failed_state(
     payment.failure_message = failure_message
     payment.processed_at = datetime.now(timezone.utc)
     payment.reconciliation_due_at = None
-    dispatch_user_notification(
-        user=payment.order.user,
-        notification_type=NotificationType.PAYMENT_FAILED,
-        title="Payment failed",
-        message=notification_message,
-        email_subject=f"Payment failed for order {payment.order.order_number}",
-        email_template="payment_status",
-        email_context={
-            "order_number": payment.order.order_number,
-            "payment_reference": payment.reference,
-            "amount": format_money(payment.amount),
-            "status_label": "Failed",
-            "status_tone": "attention",
-            "headline": "Your payment did not go through",
-            "failure_message": failure_message,
-        },
-        sms_message=f"TechHive: payment for order {payment.order.order_number} failed.",
-    )
+    if payment.order.user is not None:
+        dispatch_user_notification(
+            user=payment.order.user,
+            notification_type=NotificationType.PAYMENT_FAILED,
+            title="Payment failed",
+            message=notification_message,
+            email_subject=f"Payment failed for order {payment.order.order_number}",
+            email_template="payment_status",
+            email_context={
+                "order_number": payment.order.order_number,
+                "payment_reference": payment.reference,
+                "amount": format_money(payment.amount),
+                "status_label": "Failed",
+                "status_tone": "attention",
+                "headline": "Your payment did not go through",
+                "failure_message": failure_message,
+            },
+            sms_message=f"TechHive: payment for order {payment.order.order_number} failed.",
+        )
     return payment
 
 
 def create_payment_for_order(
     *,
-    user_id: int,
+    user_id: int | None,
     order_id: int,
     method: str,
     phone_number: str | None,
     callback_base_url: str,
     reconciliation_timeout_minutes: int,
+    tracking_token: str | None = None,
 ) -> tuple[Payment | None, ServiceError | None, int]:
     try:
         order_id = int(order_id)
@@ -203,7 +228,7 @@ def create_payment_for_order(
                 503,
             )
 
-    order = get_user_order(user_id=user_id, order_id=order_id)
+    order = _get_order_for_payment_access(user_id=user_id, order_id=order_id, tracking_token=tracking_token)
     if order is None:
         return (
             None,
@@ -297,21 +322,22 @@ def create_payment_for_order(
     payment.redirect_url = provider_payload.get("redirect_url")
     payment.provider_response = dump_provider_response(provider_payload)
     db.session.commit()
-    dispatch_user_notification(
-        user=order.user,
-        notification_type=NotificationType.PAYMENT_CREATED,
-        title="Payment created",
-        message=f"Payment {payment.reference} has been created for order {order.order_number}.",
-        email_subject=f"Payment started for order {order.order_number}",
-        email_template="payment_status",
-        email_context={
-            "order_number": order.order_number,
-            "payment_reference": payment.reference,
-            "amount": format_money(payment.amount),
-            "status_label": "Pending",
-            "status_tone": "info",
-            "headline": "Your payment request is ready",
-        },
-        sms_message=f"TechHive: payment request for order {order.order_number} has been created.",
-    )
+    if order.user is not None:
+        dispatch_user_notification(
+            user=order.user,
+            notification_type=NotificationType.PAYMENT_CREATED,
+            title="Payment created",
+            message=f"Payment {payment.reference} has been created for order {order.order_number}.",
+            email_subject=f"Payment started for order {order.order_number}",
+            email_template="payment_status",
+            email_context={
+                "order_number": order.order_number,
+                "payment_reference": payment.reference,
+                "amount": format_money(payment.amount),
+                "status_label": "Pending",
+                "status_tone": "info",
+                "headline": "Your payment request is ready",
+            },
+            sms_message=f"TechHive: payment request for order {order.order_number} has been created.",
+        )
     return payment, None, 201

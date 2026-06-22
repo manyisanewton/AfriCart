@@ -1,4 +1,21 @@
+import { Link } from "react-router-dom";
 import "../../styles/footer.css";
+
+const quickLinks = [
+  { label: "Home", to: "/" },
+  { label: "Products", to: "/products" },
+  { label: "Cart", to: "/cart" },
+  { label: "Buyer Protection", to: "/buyer-protection-policy" },
+];
+
+const policyLinks = [
+  { label: "Privacy Policy", to: "/privacy-policy" },
+  { label: "Return Policy", to: "/return-policy" },
+  { label: "Shipping Policy", to: "/shipping-and-delivery-policy" },
+  { label: "Warranty Policy", to: "/warranty-policy" },
+  { label: "Dispute Resolution", to: "/dispute-resolution" },
+];
+
 export default function Footer() {
   return (
     <footer className="footer">
@@ -14,19 +31,23 @@ export default function Footer() {
         <div>
           <h3 className="font-bold mb-3">Quick Links</h3>
           <ul className="space-y-2">
-            <li>Home</li>
-            <li>Products</li>
-            <li>Cart</li>
+            {quickLinks.map((link) => (
+              <li key={link.to}>
+                <Link to={link.to}>{link.label}</Link>
+              </li>
+            ))}
           </ul>
         </div>
 
-        {/* Categories */}
+        {/* Customer Policies */}
         <div>
-          <h3 className="font-bold mb-3">Categories</h3>
+          <h3 className="font-bold mb-3">Customer Policies</h3>
           <ul className="space-y-2">
-            <li>Smartphones</li>
-            <li>Laptops</li>
-            <li>Electronics</li>
+            {policyLinks.map((link) => (
+              <li key={link.to}>
+                <Link to={link.to}>{link.label}</Link>
+              </li>
+            ))}
           </ul>
         </div>
 
@@ -42,9 +63,9 @@ export default function Footer() {
       {/* Bottom row */}
       <div className="footerBottom">
         <div className="space-x-4">
-          <span>Privacy Policy</span>
-          <span>Terms of Service</span>
-          <span>Return Policy</span>
+          <Link to="/privacy-policy">Privacy Policy</Link>
+          <Link to="/payment-information-and-guidelines">Payment Information</Link>
+          <Link to="/report-a-product">Report a Product</Link>
         </div>
 
         <div>© 2026 TechHive. All rights reserved</div>

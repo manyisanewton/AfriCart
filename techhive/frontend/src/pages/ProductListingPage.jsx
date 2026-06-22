@@ -187,7 +187,7 @@ export default function ProductListingPage( { addToCart } ) {
       </div>
 
       {/* PRODUCT GRID */}
-      <ProductGrid products={products} />
+      <ProductGrid products={products} onAddToCart={addToCart} />
     </div>
   );
 }

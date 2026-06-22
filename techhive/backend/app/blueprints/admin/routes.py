@@ -19,6 +19,10 @@ from app.blueprints.admin.schemas import (
     validate_bulk_notification_payload,
     validate_flash_sale_payload,
     validate_flash_sale_update_payload,
+    validate_cms_page_payload,
+    validate_cms_page_update_payload,
+    validate_integration_connection_payload,
+    validate_integration_connection_update_payload,
     validate_named_entity_payload,
     validate_named_entity_update_payload,
     validate_notification_delivery_retry_payload,
@@ -78,9 +82,12 @@ from app.models import (
     Banner,
     Brand,
     Category,
+    CmsPage,
     DeliveryAgent,
     DeliveryZone,
     FlashSale,
+    IntegrationConnection,
+    IntegrationLog,
     NotificationChannel,
     NotificationType,
     Offer,
@@ -138,6 +145,13 @@ from app.services.admin_reporting_service import (
 )
 from app.services.bulk_email_service import dispatch_bulk_email_campaign
 from app.services.campaign_summary_service import build_campaign_summary
+from app.services.integration_service import (
+    append_integration_log,
+    get_connection_adapter,
+    get_connection_payload,
+    list_all_connections,
+    serialize_integration_connection,
+)
 from app.services.notification_dispatch_service import dispatch_bulk_notification
 from app.services.notification_dispatch_service import retry_notification_delivery
 from app.services.major_notification_service import (
@@ -2332,6 +2346,8 @@ def create_product():
         currency=payload["currency"],
         stock_quantity=payload["stock_quantity"],
         low_stock_threshold=payload["low_stock_threshold"],
+        weight_grams=payload["weight_grams"],
+        dimensions_text=payload["dimensions_text"],
         is_active=payload["is_active"],
         is_featured=payload["is_featured"],
     )
@@ -2402,6 +2418,8 @@ def update_product_detail(product_id: int):
         "currency",
         "stock_quantity",
         "low_stock_threshold",
+        "weight_grams",
+        "dimensions_text",
         "short_description",
         "description",
         "is_active",
@@ -3325,6 +3343,196 @@ def get_audit_log_detail(audit_log_id: int):
     return jsonify({"audit_log": serialize_audit_log(audit_log)})
 
 
+def _serialize_cms_page(page: CmsPage) -> dict:
+    return {
+        "id": page.id,
+        "url": page.url,
+        "page_key": page.page_key,
+        "page_type": page.page_type,
+        "status": page.status,
+        "title": page.title,
+        "excerpt": page.excerpt,
+        "content": page.content,
+        "meta_title": page.meta_title,
+        "meta_description": page.meta_description,
+        "registration_required": page.registration_required,
+        "is_system_page": page.is_system_page,
+        "allow_indexing": page.allow_indexing,
+        "published_at": page.published_at.isoformat() if page.published_at else None,
+        "created_by_user_id": page.created_by_user_id,
+        "created_by_name": page.created_by_user.full_name if page.created_by_user else None,
+        "updated_by_user_id": page.updated_by_user_id,
+        "updated_by_name": page.updated_by_user.full_name if page.updated_by_user else None,
+        "created_at": page.created_at.isoformat() if page.created_at else None,
+        "updated_at": page.updated_at.isoformat() if page.updated_at else None,
+    }
+
+
+@admin_bp.get("/pages")
+@role_required(UserRole.ADMIN.value)
+def list_cms_pages():
+    page = request.args.get("page", 1)
+    page_size = request.args.get("page_size", 200)
+
+    page, page_error = parse_positive_int(page, field_name="page")
+    if page_error:
+        return validation_error(page_error)
+
+    page_size, page_size_error = parse_positive_int(page_size, field_name="page_size")
+    if page_size_error:
+        return validation_error(page_size_error)
+
+    pagination = CmsPage.query.order_by(CmsPage.is_system_page.desc(), CmsPage.title.asc(), CmsPage.id.desc()).paginate(
+        page=page,
+        per_page=min(page_size, 200),
+        error_out=False,
+    )
+    return jsonify({
+        "results": [_serialize_cms_page(item) for item in pagination.items],
+        "pagination": {
+            "page": pagination.page,
+            "page_size": pagination.per_page,
+            "total": pagination.total,
+            "num_pages": pagination.pages,
+            "has_next": pagination.has_next,
+        },
+    })
+
+
+@admin_bp.post("/pages")
+@role_required(UserRole.ADMIN.value)
+def create_cms_page():
+    payload = validate_cms_page_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    existing = CmsPage.query.filter_by(url=payload["url"]).first()
+    if existing:
+        return validation_error({"url": "A page with this URL already exists."})
+    if payload["page_key"]:
+        existing_by_key = CmsPage.query.filter_by(page_key=payload["page_key"]).first()
+        if existing_by_key:
+            return validation_error({"page_key": "A page with this page_key already exists."})
+
+    page = CmsPage(
+        url=payload["url"],
+        page_key=payload["page_key"],
+        page_type=payload["page_type"],
+        status=payload["status"],
+        title=payload["title"],
+        excerpt=payload["excerpt"],
+        content=payload["content"],
+        meta_title=payload["meta_title"],
+        meta_description=payload["meta_description"],
+        registration_required=payload["registration_required"],
+        is_system_page=payload["is_system_page"],
+        allow_indexing=payload["allow_indexing"],
+        published_at=datetime.now(timezone.utc) if payload["status"] == "published" else None,
+        created_by_user_id=g.current_user.id,
+        updated_by_user_id=g.current_user.id,
+    )
+    db.session.add(page)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.cms_page_created",
+        entity_type="cms_page",
+        entity_id=page.id,
+        metadata={"url": page.url, "title": page.title, "page_key": page.page_key, "status": page.status},
+    )
+    db.session.commit()
+    return jsonify({"page": _serialize_cms_page(page)}), 201
+
+
+@admin_bp.get("/pages/<int:page_id>")
+@role_required(UserRole.ADMIN.value)
+def get_cms_page(page_id: int):
+    page = db.session.get(CmsPage, page_id)
+    if page is None:
+        return _not_found("Page not found.")
+    return jsonify({"page": _serialize_cms_page(page)})
+
+
+@admin_bp.patch("/pages/<int:page_id>")
+@role_required(UserRole.ADMIN.value)
+def update_cms_page(page_id: int):
+    page = db.session.get(CmsPage, page_id)
+    if page is None:
+        return _not_found("Page not found.")
+
+    payload = validate_cms_page_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    if page.is_system_page and "is_system_page" in payload["provided_fields"] and not payload["is_system_page"]:
+        return validation_error({"is_system_page": "System pages cannot be downgraded from system status."})
+
+    if "url" in payload["provided_fields"]:
+        existing = CmsPage.query.filter(CmsPage.url == payload["url"], CmsPage.id != page.id).first()
+        if existing:
+            return validation_error({"url": "A page with this URL already exists."})
+        page.url = payload["url"]
+    if "page_key" in payload["provided_fields"]:
+        if payload["page_key"]:
+            existing = CmsPage.query.filter(CmsPage.page_key == payload["page_key"], CmsPage.id != page.id).first()
+            if existing:
+                return validation_error({"page_key": "A page with this page_key already exists."})
+        page.page_key = payload["page_key"]
+    if "page_type" in payload["provided_fields"]:
+        page.page_type = payload["page_type"]
+    if "status" in payload["provided_fields"]:
+        previous_status = page.status
+        page.status = payload["status"]
+        if payload["status"] == "published" and previous_status != "published":
+            page.published_at = datetime.now(timezone.utc)
+    if "title" in payload["provided_fields"]:
+        page.title = payload["title"]
+    if "excerpt" in payload["provided_fields"]:
+        page.excerpt = payload["excerpt"]
+    if "content" in payload["provided_fields"]:
+        page.content = payload["content"]
+    if "meta_title" in payload["provided_fields"]:
+        page.meta_title = payload["meta_title"]
+    if "meta_description" in payload["provided_fields"]:
+        page.meta_description = payload["meta_description"]
+    if "registration_required" in payload["provided_fields"]:
+        page.registration_required = payload["registration_required"]
+    if "is_system_page" in payload["provided_fields"]:
+        page.is_system_page = payload["is_system_page"]
+    if "allow_indexing" in payload["provided_fields"]:
+        page.allow_indexing = payload["allow_indexing"]
+    page.updated_by_user_id = g.current_user.id
+
+    _add_audit_log(
+        action="admin.cms_page_updated",
+        entity_type="cms_page",
+        entity_id=page.id,
+        metadata={"url": page.url, "title": page.title, "page_key": page.page_key, "status": page.status},
+    )
+    db.session.commit()
+    return jsonify({"page": _serialize_cms_page(page)})
+
+
+@admin_bp.delete("/pages/<int:page_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_cms_page(page_id: int):
+    page = db.session.get(CmsPage, page_id)
+    if page is None:
+        return _not_found("Page not found.")
+    if page.is_system_page:
+        return validation_error({"page": "System pages cannot be deleted. Archive them instead."})
+
+    metadata = {"url": page.url, "title": page.title, "page_key": page.page_key}
+    db.session.delete(page)
+    _add_audit_log(
+        action="admin.cms_page_deleted",
+        entity_type="cms_page",
+        entity_id=page_id,
+        metadata=metadata,
+    )
+    db.session.commit()
+    return jsonify({"message": "Page deleted successfully."})
+
+
 @admin_bp.get("/banners")
 @role_required(UserRole.ADMIN.value)
 def list_banners():
@@ -3981,3 +4189,296 @@ def update_supplier(supplier_id: int):
     )
     db.session.commit()
     return jsonify({"supplier": _serialize_supplier(supplier)})
+
+
+@admin_bp.get("/integrations")
+@role_required(UserRole.ADMIN.value)
+def list_integrations():
+    return jsonify({"results": list_all_connections()})
+
+
+def _parse_integration_id(raw_connection_id: str):
+    try:
+        return int(raw_connection_id)
+    except (TypeError, ValueError):
+        return None
+
+
+@admin_bp.post("/integrations")
+@role_required(UserRole.ADMIN.value)
+def create_integration():
+    payload = validate_integration_connection_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    partner = None
+    if payload["partner_id"] is not None:
+        partner = db.session.get(Partner, payload["partner_id"])
+        if partner is None:
+            return validation_error({"partner_id": "Selected partner was not found."})
+
+    connection = IntegrationConnection(
+        name=payload["name"],
+        partner_id=partner.id if partner else None,
+        connection_type=payload["connection_type"],
+        base_url=payload["base_url"],
+        auth_type=payload["auth_type"],
+        credential_source=payload["credential_source"],
+        secret_env_prefix=payload["secret_env_prefix"],
+        credential_values=payload["credential_values"],
+        default_company=payload["default_company"],
+        default_warehouse=payload["default_warehouse"],
+        poll_interval_minutes=payload["poll_interval_minutes"],
+        status=payload["status"],
+        is_active=payload["is_active"],
+    )
+    db.session.add(connection)
+    db.session.flush()
+    _add_audit_log(
+        action="admin.integration_created",
+        entity_type="integration_connection",
+        entity_id=connection.id,
+        metadata={"name": connection.name, "connection_type": connection.connection_type},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_integration_connection(connection)}), 201
+
+
+@admin_bp.get("/integrations/<connection_id>")
+@role_required(UserRole.ADMIN.value)
+def get_integration(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+
+    payload = get_connection_payload(connection_id)
+    if payload is None:
+        return _not_found("Integration connection not found.")
+
+    return jsonify({"item": payload})
+
+
+@admin_bp.patch("/integrations/<connection_id>")
+@role_required(UserRole.ADMIN.value)
+def update_integration(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+    connection = db.session.get(IntegrationConnection, connection_id)
+    if connection is None:
+        return _not_found("Integration connection not found.")
+
+    payload = validate_integration_connection_update_payload(get_json_payload())
+    if "errors" in payload:
+        return validation_error(payload["errors"])
+
+    if "partner_id" in payload["provided_fields"]:
+        if payload["partner_id"] is None:
+            connection.partner_id = None
+        else:
+            partner = db.session.get(Partner, payload["partner_id"])
+            if partner is None:
+                return validation_error({"partner_id": "Selected partner was not found."})
+            connection.partner_id = partner.id
+
+    for field in (
+        "name",
+        "connection_type",
+        "base_url",
+        "auth_type",
+        "credential_source",
+        "secret_env_prefix",
+        "credential_values",
+        "default_company",
+        "default_warehouse",
+        "poll_interval_minutes",
+        "status",
+        "is_active",
+    ):
+        if field in payload["provided_fields"]:
+            setattr(connection, field, payload[field])
+
+    _add_audit_log(
+        action="admin.integration_updated",
+        entity_type="integration_connection",
+        entity_id=connection.id,
+        metadata={"name": connection.name, "connection_type": connection.connection_type},
+    )
+    db.session.commit()
+    return jsonify({"item": serialize_integration_connection(connection)})
+
+
+@admin_bp.delete("/integrations/<connection_id>")
+@role_required(UserRole.ADMIN.value)
+def delete_integration(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+    connection = db.session.get(IntegrationConnection, connection_id)
+    if connection is None:
+        return _not_found("Integration connection not found.")
+
+    metadata = {"name": connection.name, "connection_type": connection.connection_type}
+    IntegrationLog.query.filter_by(connection_id=connection.id).delete()
+    db.session.delete(connection)
+    _add_audit_log(
+        action="admin.integration_deleted",
+        entity_type="integration_connection",
+        entity_id=connection_id,
+        metadata=metadata,
+    )
+    db.session.commit()
+    return jsonify({"message": "Integration deleted successfully."})
+
+
+@admin_bp.get("/integrations/<connection_id>/logs")
+@role_required(UserRole.ADMIN.value)
+def list_integration_logs(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+    payload = get_connection_payload(connection_id)
+    if payload is None:
+        return _not_found("Integration connection not found.")
+
+    logs = (
+        IntegrationLog.query.filter_by(connection_id=connection_id)
+        .order_by(IntegrationLog.created_at.desc(), IntegrationLog.id.desc())
+        .limit(100)
+        .all()
+    )
+    return jsonify(
+        {
+            "results": [
+                {
+                    "id": log.id,
+                    "connection": log.connection_id,
+                    "connection_name": log.connection_name,
+                    "direction": log.direction,
+                    "entity_type": log.entity_type,
+                    "external_reference": log.external_reference or "",
+                    "status": log.status,
+                    "payload_excerpt": log.payload_excerpt or {},
+                    "error_message": log.error_message,
+                    "created_at": log.created_at.isoformat() if log.created_at else None,
+                }
+                for log in logs
+            ]
+        }
+    )
+
+
+@admin_bp.post("/integrations/<connection_id>/test")
+@role_required(UserRole.ADMIN.value)
+def test_integration(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+    adapter = get_connection_adapter(connection_id)
+    if adapter is None:
+        return _not_found("Integration connection not found.")
+
+    ok, result = adapter.test_connection()
+    adapter.on_test_result(ok=ok)
+    adapter.persist_state()
+    append_integration_log(
+        connection_id=connection_id,
+        connection_name=adapter.name,
+        direction="outbound",
+        entity_type="connection_test",
+        external_reference=adapter.connection_type,
+        status="success" if ok else "error",
+        payload_excerpt=result,
+        error_message=None if ok else "Local validation failed.",
+    )
+    db.session.commit()
+    return jsonify({"result": {"ok": ok, **result}})
+
+
+@admin_bp.get("/integrations/<connection_id>/preview")
+@role_required(UserRole.ADMIN.value)
+def preview_integration(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+    adapter = get_connection_adapter(connection_id)
+    if adapter is None:
+        return _not_found("Integration connection not found.")
+    if not adapter.supports_preview:
+        return validation_error({"integration": "This connection type does not support preview."})
+
+    resource = str(request.args.get("resource", "items")).strip().lower()
+    limit_raw = request.args.get("limit", 20)
+    limit, limit_error = parse_positive_int(limit_raw, field_name="limit")
+    if limit_error:
+        return validation_error(limit_error)
+
+    preview = adapter.preview_catalog_records(resource, min(limit, 100))
+    append_integration_log(
+        connection_id=connection_id,
+        connection_name=adapter.name,
+        direction="inbound",
+        entity_type=f"{resource}_preview",
+        external_reference=adapter.connection_type,
+        status="success",
+        payload_excerpt={"count": preview["count"], "resource": resource},
+    )
+    db.session.commit()
+    return jsonify(preview)
+
+
+@admin_bp.post("/integrations/<connection_id>/import")
+@role_required(UserRole.ADMIN.value)
+def import_integration_catalog(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+    adapter = get_connection_adapter(connection_id)
+    if adapter is None:
+        return _not_found("Integration connection not found.")
+    if not adapter.supports_import:
+        return validation_error({"integration": "This connection type does not support import."})
+
+    include_stock = bool(get_json_payload().get("include_stock", False))
+    summary = adapter.import_catalog(include_stock=include_stock)
+    adapter.on_import_success()
+    adapter.persist_state()
+    append_integration_log(
+        connection_id=connection_id,
+        connection_name=adapter.name,
+        direction="inbound",
+        entity_type="catalog_import",
+        external_reference=adapter.connection_type,
+        status="success",
+        payload_excerpt=summary,
+    )
+    db.session.commit()
+    return jsonify({"summary": summary})
+
+
+@admin_bp.post("/integrations/<connection_id>/stock-sync")
+@role_required(UserRole.ADMIN.value)
+def sync_integration_stock(connection_id: str):
+    connection_id = _parse_integration_id(connection_id)
+    if connection_id is None:
+        return _not_found("Integration connection not found.")
+    adapter = get_connection_adapter(connection_id)
+    if adapter is None:
+        return _not_found("Integration connection not found.")
+    if not adapter.supports_stock_sync:
+        return validation_error({"integration": "This connection type does not support stock sync."})
+
+    summary = adapter.sync_stock()
+    adapter.on_stock_sync_success()
+    adapter.persist_state()
+    append_integration_log(
+        connection_id=connection_id,
+        connection_name=adapter.name,
+        direction="sync",
+        entity_type="stock_sync",
+        external_reference=adapter.connection_type,
+        status="success",
+        payload_excerpt=summary,
+    )
+    db.session.commit()
+    return jsonify({"summary": summary})

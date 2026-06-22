@@ -397,6 +397,20 @@ onMounted(loadSupport)
           <p class="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{{ selectedTicket.message }}</p>
         </div>
 
+        <div v-if="Object.keys(selectedTicket.contextData || {}).length" class="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Structured context</p>
+          <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div
+              v-for="(value, key) in selectedTicket.contextData"
+              :key="key"
+              class="rounded-lg border border-slate-200 bg-white p-3"
+            >
+              <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">{{ formatCategory(key) }}</p>
+              <p class="mt-1 break-words text-sm font-medium text-slate-900">{{ value }}</p>
+            </div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <UFormField label="Ticket status">
             <USelect

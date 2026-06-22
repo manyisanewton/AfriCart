@@ -192,6 +192,8 @@ def create_product(
     stock_quantity: int,
     short_description: str | None = None,
     description: str | None = None,
+    weight_grams: int | None = None,
+    dimensions_text: str | None = None,
     is_active: bool = True,
     is_featured: bool = False,
 ):
@@ -206,6 +208,8 @@ def create_product(
         stock_quantity=stock_quantity,
         short_description=short_description,
         description=description,
+        weight_grams=weight_grams,
+        dimensions_text=dimensions_text,
         is_active=is_active,
         is_featured=is_featured,
     )

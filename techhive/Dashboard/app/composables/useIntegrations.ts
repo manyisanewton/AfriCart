@@ -8,6 +8,11 @@ export interface IntegrationConnection {
   auth_type: string
   credential_source: string
   secret_env_prefix?: string
+  credentials?: {
+    values: Record<string, string | null>
+    read_only: boolean
+    source: string
+  }
   has_api_key: boolean
   has_api_secret: boolean
   default_company?: string
@@ -19,6 +24,10 @@ export interface IntegrationConnection {
   last_failed_sync_at?: string | null
   created_at: string
   updated_at: string
+  supports_test?: boolean
+  supports_preview?: boolean
+  supports_import?: boolean
+  supports_stock_sync?: boolean
 }
 
 export interface IntegrationLog {
@@ -42,8 +51,26 @@ export interface ERPNextPreviewResult {
   records: Record<string, any>[]
 }
 
+export interface IntegrationConnectionPayload {
+  name: string
+  partner_id?: number | null
+  connection_type: string
+  base_url: string
+  auth_type: string
+  credential_source: string
+  secret_env_prefix?: string | null
+  credential_values?: Record<string, string> | null
+  default_company?: string | null
+  default_warehouse?: string | null
+  poll_interval_minutes?: number | null
+  status?: string
+  is_active?: boolean
+}
+
 function readApiError(err: any) {
-  return err?.data?.error?.detail
+  return err?.data?.error?.message
+    || err?.data?.error?.detail
+    || (err?.data?.error?.details && Object.entries(err.data.error.details).map(([field, message]) => `${field}: ${String(message)}`).join(' '))
     || err?.data?.detail
     || err?.data?.connection?.[0]
     || err?.message
@@ -60,7 +87,7 @@ export function useIntegrations() {
     error.value = null
 
     try {
-      const result = await request<{ results: IntegrationConnection[] }>('/admin/integrations/', {
+      const result = await request<{ results: IntegrationConnection[] }>('/admin/integrations', {
         method: 'GET',
       })
       return { success: true, data: result.results || [] }
@@ -76,7 +103,7 @@ export function useIntegrations() {
 
   async function getLogs(connectionId: number) {
     try {
-      const result = await request<{ results: IntegrationLog[] }>(`/admin/integrations/${connectionId}/logs/`, {
+      const result = await request<{ results: IntegrationLog[] }>(`/admin/integrations/${connectionId}/logs`, {
         method: 'GET',
       })
       return { success: true, data: result.results || [] }
@@ -86,12 +113,24 @@ export function useIntegrations() {
     }
   }
 
+  async function getConnection(connectionId: number) {
+    try {
+      const result = await request<{ item: IntegrationConnection }>(`/admin/integrations/${connectionId}`, {
+        method: 'GET',
+      })
+      return { success: true, data: result.item }
+    }
+    catch (err: any) {
+      return { success: false, error: readApiError(err) }
+    }
+  }
+
   async function testConnection(connectionId: number) {
     loading.value = true
     error.value = null
 
     try {
-      const result = await request<{ result: Record<string, any> }>(`/admin/integrations/${connectionId}/erpnext/test/`, {
+      const result = await request<{ result: Record<string, any> }>(`/admin/integrations/${connectionId}/test`, {
         method: 'POST',
       })
       return { success: true, data: result.result }
@@ -110,7 +149,7 @@ export function useIntegrations() {
     error.value = null
 
     try {
-      const result = await request<{ summary: Record<string, any> }>(`/admin/integrations/${connectionId}/erpnext/stock-sync/`, {
+      const result = await request<{ summary: Record<string, any> }>(`/admin/integrations/${connectionId}/stock-sync`, {
         method: 'POST',
       })
       return { success: true, data: result.summary }
@@ -129,7 +168,7 @@ export function useIntegrations() {
     error.value = null
 
     try {
-      const result = await request<ERPNextPreviewResult>(`/admin/integrations/${connectionId}/erpnext/preview/`, {
+      const result = await request<ERPNextPreviewResult>(`/admin/integrations/${connectionId}/preview`, {
         method: 'GET',
         query: {
           resource: params.resource,
@@ -152,7 +191,7 @@ export function useIntegrations() {
     error.value = null
 
     try {
-      const result = await request<{ summary: Record<string, any> }>(`/admin/integrations/${connectionId}/erpnext/import/`, {
+      const result = await request<{ summary: Record<string, any> }>(`/admin/integrations/${connectionId}/import`, {
         method: 'POST',
         body: payload,
       })
@@ -167,14 +206,77 @@ export function useIntegrations() {
     }
   }
 
+  async function createConnection(payload: IntegrationConnectionPayload) {
+    loading.value = true
+    error.value = null
+
+    try {
+      const result = await request<{ item: IntegrationConnection }>('/admin/integrations', {
+        method: 'POST',
+        body: payload,
+      })
+      return { success: true, data: result.item }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function updateConnection(connectionId: number, payload: Partial<IntegrationConnectionPayload>) {
+    loading.value = true
+    error.value = null
+
+    try {
+      const result = await request<{ item: IntegrationConnection }>(`/admin/integrations/${connectionId}`, {
+        method: 'PATCH',
+        body: payload,
+      })
+      return { success: true, data: result.item }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function deleteConnection(connectionId: number) {
+    loading.value = true
+    error.value = null
+
+    try {
+      await request(`/admin/integrations/${connectionId}`, {
+        method: 'DELETE',
+      })
+      return { success: true }
+    }
+    catch (err: any) {
+      error.value = readApiError(err)
+      return { success: false, error: error.value }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
   return {
+    createConnection,
+    deleteConnection,
     loading,
     error,
+    getConnection,
     getConnections,
     getLogs,
     testConnection,
     syncStock,
     previewERPNext,
     importERPNextCatalog,
+    updateConnection,
   }
 }

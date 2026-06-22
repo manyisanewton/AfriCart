@@ -10,6 +10,8 @@ export interface AdminProductItem {
   currency: string
   stock_quantity: number
   low_stock_threshold: number
+  weight_grams: number | null
+  dimensions_text: string | null
   in_stock: boolean
   is_active: boolean
   is_featured: boolean
@@ -78,6 +80,8 @@ function mapProductToRow(product: AdminProductItem) {
     category: product.category?.name || 'Uncategorized',
       stock: Number(product.stock_quantity || 0),
       lowStockThreshold: Number(product.low_stock_threshold ?? 5),
+      weight: product.weight_grams === null || product.weight_grams === undefined ? null : Number(product.weight_grams),
+      dimensions: product.dimensions_text || '',
       imageUrl: mediaUrl(product.primary_image?.image_url || ''),
     updatedAt: '',
     vendorName: product.vendor?.business_name || 'Unknown vendor',
@@ -215,6 +219,8 @@ export function useProduct() {
       currency: data.currency || 'KES',
       stock_quantity: Number(data.stock || 0),
       low_stock_threshold: Number(data.lowStockThreshold ?? 5),
+      weight_grams: data.weight === null || data.weight === undefined || data.weight === '' ? null : Number(data.weight),
+      dimensions_text: String(data.dimensions || '').trim() || null,
       is_active: data.status === 'active',
       is_featured: false,
     }
@@ -232,8 +238,8 @@ export function useProduct() {
       sku: product.sku || '',
       stock: Number(product.stock_quantity || 0),
       lowStockThreshold: Number(product.low_stock_threshold ?? 5),
-      weight: null,
-      dimensions: '',
+      weight: product.weight_grams === null || product.weight_grams === undefined ? null : Number(product.weight_grams),
+      dimensions: product.dimensions_text || '',
       status: product.is_active ? 'active' : 'draft',
       vendor: String(product.vendor?.id || ''),
       category: String(product.category?.id || ''),

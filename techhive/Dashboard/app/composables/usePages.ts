@@ -1,16 +1,39 @@
 export interface CmsPageItem {
   id: number
   url: string
+  page_key?: string | null
+  page_type: string
+  status: string
   title: string
+  excerpt?: string | null
   content: string
+  meta_title?: string | null
+  meta_description?: string | null
   registration_required: boolean
+  is_system_page: boolean
+  allow_indexing: boolean
+  published_at?: string | null
+  created_by_user_id?: number | null
+  created_by_name?: string | null
+  updated_by_user_id?: number | null
+  updated_by_name?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface CmsPagePayload {
   url: string
+  page_key?: string | null
+  page_type?: string
+  status?: string
   title: string
+  excerpt?: string | null
   content: string
+  meta_title?: string | null
+  meta_description?: string | null
   registration_required?: boolean
+  is_system_page?: boolean
+  allow_indexing?: boolean
 }
 
 function readApiError(err: any) {
@@ -39,7 +62,7 @@ export function usePages() {
     error.value = null
 
     try {
-      const result = await request<{ results: CmsPageItem[], pagination: any }>('/admin/pages/', {
+      const result = await request<{ results: CmsPageItem[], pagination: any }>('/admin/pages', {
         method: 'GET',
         query: {
           page: params.page || 1,
@@ -62,7 +85,7 @@ export function usePages() {
     error.value = null
 
     try {
-      const result = await request<{ page: CmsPageItem }>(`/admin/pages/${id}/`, {
+      const result = await request<{ page: CmsPageItem }>(`/admin/pages/${id}`, {
         method: 'GET',
       })
       return { success: true, data: result.page }
@@ -81,7 +104,7 @@ export function usePages() {
     error.value = null
 
     try {
-      const result = await request<{ page: CmsPageItem }>('/admin/pages/', {
+      const result = await request<{ page: CmsPageItem }>('/admin/pages', {
         method: 'POST',
         body: payload,
       })
@@ -101,7 +124,7 @@ export function usePages() {
     error.value = null
 
     try {
-      const result = await request<{ page: CmsPageItem }>(`/admin/pages/${id}/`, {
+      const result = await request<{ page: CmsPageItem }>(`/admin/pages/${id}`, {
         method: 'PATCH',
         body: payload,
       })
@@ -121,7 +144,7 @@ export function usePages() {
     error.value = null
 
     try {
-      await request(`/admin/pages/${id}/`, { method: 'DELETE' })
+      await request(`/admin/pages/${id}`, { method: 'DELETE' })
       return { success: true }
     }
     catch (err: any) {

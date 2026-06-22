@@ -264,6 +264,7 @@ def test_support_ticket_create_and_status_update_use_support_template(client, mo
             "subject": "Need delivery help",
             "message": "Please help with tracking.",
             "category": "delivery",
+            "context_data": {"order_number": "TH-4455"},
         },
     )
     assert create_response.status_code == 201

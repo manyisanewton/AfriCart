@@ -12,6 +12,7 @@ from app.models import (
     Category,
     DeliveryAgent,
     DeliveryZone,
+    IntegrationConnection,
     NotificationDelivery,
     NotificationDeliveryStatus,
     Payment,
@@ -35,6 +36,7 @@ from app.models import (
     SupportTicketStatus,
     Supplier,
     SupplierStatus,
+    CmsPage,
     User,
     UserRole,
     Vendor,
@@ -1592,10 +1594,15 @@ def test_admin_can_list_support_tickets_and_update_status(client):
             "subject": "Need order help",
             "message": "Please assist with my order.",
             "category": "orders",
+            "context_data": {
+                "order_number": "TH-1001",
+                "channel": "content_page",
+            },
         },
     )
     assert support_response.status_code == 201
     ticket_id = support_response.get_json()["item"]["id"]
+    assert support_response.get_json()["item"]["context_data"]["order_number"] == "TH-1001"
 
     list_response = client.get("/api/v1/admin/support-tickets", headers=headers)
     assert list_response.status_code == 200
@@ -1610,6 +1617,7 @@ def test_admin_can_list_support_tickets_and_update_status(client):
     assert update_response.get_json()["item"]["status"] == "resolved"
     assert update_response.get_json()["item"]["admin_note"] == "Customer guided to tracking page."
     assert update_response.get_json()["item"]["resolved_at"] is not None
+    assert update_response.get_json()["item"]["context_data"]["channel"] == "content_page"
 
 
 def test_admin_can_filter_support_tickets_by_status(client):
@@ -2251,3 +2259,251 @@ def test_admin_reconciliation_marks_manual_review_when_provider_reports_success_
     assert item["status"] == "pending"
     assert item["failure_code"] == "manual_review_required"
     assert item["reconciliation_due_at"] is None
+
+
+def test_admin_can_manage_integration_connections(client):
+    headers = create_admin_headers(client)
+    partner = Partner(name="Integration Partner", code="INT-PARTNER")
+    db.session.add(partner)
+    db.session.commit()
+
+    create_response = client.post(
+        "/api/v1/admin/integrations",
+        json={
+            "name": "ERPNext Main",
+            "partner_id": partner.id,
+            "connection_type": "erpnext",
+            "base_url": "https://erpnext.example.com",
+            "auth_type": "api_key_secret",
+            "credential_source": "environment",
+            "secret_env_prefix": "ERPNEXT_MAIN",
+            "default_company": "Urbantech Kenya",
+            "default_warehouse": "Main Warehouse",
+            "poll_interval_minutes": 30,
+            "status": "draft",
+            "is_active": True,
+        },
+        headers=headers,
+    )
+
+    assert create_response.status_code == 201
+    connection_id = create_response.get_json()["item"]["id"]
+
+    list_response = client.get("/api/v1/admin/integrations", headers=headers)
+
+    assert list_response.status_code == 200
+    payload = list_response.get_json()["results"]
+    assert any(item["id"] == connection_id for item in payload)
+    assert any(item["connection_type"] == "mpesa" for item in payload)
+
+    update_response = client.patch(
+        f"/api/v1/admin/integrations/{connection_id}",
+        json={"status": "active", "poll_interval_minutes": 15},
+        headers=headers,
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.get_json()["item"]["status"] == "active"
+    assert update_response.get_json()["item"]["poll_interval_minutes"] == 15
+
+    delete_response = client.delete(f"/api/v1/admin/integrations/{connection_id}", headers=headers)
+
+    assert delete_response.status_code == 200
+    assert db.session.get(IntegrationConnection, connection_id) is None
+
+
+def test_admin_can_test_preview_and_import_integration(client):
+    headers = create_admin_headers(client)
+    vendor_user, vendor = create_vendor_fixture()
+    del vendor_user
+    create_product_fixture(vendor)
+
+    connection = IntegrationConnection(
+        name="Zoho Catalog",
+        connection_type="zoho_inventory",
+        base_url="https://inventory.zoho.example.com",
+        auth_type="token",
+        credential_source="environment",
+        secret_env_prefix="ZOHO_MAIN",
+        status="draft",
+        is_active=True,
+    )
+    db.session.add(connection)
+    db.session.commit()
+
+    test_response = client.post(f"/api/v1/admin/integrations/{connection.id}/test", headers=headers)
+    assert test_response.status_code == 200
+    assert "ok" in test_response.get_json()["result"]
+
+    preview_response = client.get(
+        f"/api/v1/admin/integrations/{connection.id}/preview?resource=items&limit=10",
+        headers=headers,
+    )
+    assert preview_response.status_code == 200
+    assert preview_response.get_json()["resource"] == "items"
+
+    import_response = client.post(
+        f"/api/v1/admin/integrations/{connection.id}/import",
+        json={"include_stock": True},
+        headers=headers,
+    )
+    assert import_response.status_code == 200
+    assert import_response.get_json()["summary"]["stock_included"] is True
+
+    logs_response = client.get(f"/api/v1/admin/integrations/{connection.id}/logs", headers=headers)
+    assert logs_response.status_code == 200
+    assert len(logs_response.get_json()["results"]) >= 2
+
+
+def test_admin_can_view_integration_detail_with_credentials(client):
+    headers = create_admin_headers(client)
+
+    connection = IntegrationConnection(
+        name="ERP Detail",
+        connection_type="erpnext",
+        base_url="https://erp.example.com",
+        auth_type="api_key_secret",
+        credential_source="vault",
+        secret_env_prefix="ERP_DETAIL",
+        credential_values={"api_key": "key-123", "api_secret": "secret-456"},
+        status="draft",
+        is_active=True,
+    )
+    db.session.add(connection)
+    db.session.commit()
+
+    response = client.get(f"/api/v1/admin/integrations/{connection.id}", headers=headers)
+
+    assert response.status_code == 200
+    item = response.get_json()["item"]
+    assert item["id"] == connection.id
+    assert item["credentials"]["values"]["api_key"] == "key-123"
+    assert item["credentials"]["read_only"] is False
+
+
+def test_admin_can_manage_cms_pages(client):
+    headers = create_admin_headers(client)
+
+    create_response = client.post(
+        "/api/v1/admin/pages",
+        headers=headers,
+        json={
+            "url": "/about/",
+            "page_key": "about_page",
+            "page_type": "help",
+            "status": "published",
+            "title": "About TechHive",
+            "excerpt": "About excerpt",
+            "content": "<p>About content</p>",
+            "meta_title": "About TechHive | AfriCart",
+            "meta_description": "Learn more about TechHive.",
+            "registration_required": False,
+            "is_system_page": True,
+            "allow_indexing": True,
+        },
+    )
+    assert create_response.status_code == 201
+    page_id = create_response.get_json()["page"]["id"]
+    assert create_response.get_json()["page"]["page_key"] == "about_page"
+    assert create_response.get_json()["page"]["status"] == "published"
+    assert create_response.get_json()["page"]["is_system_page"] is True
+    assert create_response.get_json()["page"]["published_at"] is not None
+
+    list_response = client.get("/api/v1/admin/pages?page=1&page_size=200", headers=headers)
+    assert list_response.status_code == 200
+    assert list_response.get_json()["results"][0]["title"] == "About TechHive"
+
+    detail_response = client.get(f"/api/v1/admin/pages/{page_id}", headers=headers)
+    assert detail_response.status_code == 200
+    assert detail_response.get_json()["page"]["url"] == "/about/"
+    assert detail_response.get_json()["page"]["created_by_name"] is not None
+
+    update_response = client.patch(
+        f"/api/v1/admin/pages/{page_id}",
+        headers=headers,
+        json={"title": "About AfriCart", "registration_required": True, "status": "archived", "allow_indexing": False},
+    )
+    assert update_response.status_code == 200
+    assert update_response.get_json()["page"]["title"] == "About AfriCart"
+    assert update_response.get_json()["page"]["registration_required"] is True
+    assert update_response.get_json()["page"]["status"] == "archived"
+    assert update_response.get_json()["page"]["allow_indexing"] is False
+
+    delete_response = client.delete(f"/api/v1/admin/pages/{page_id}", headers=headers)
+    assert delete_response.status_code == 400
+    assert db.session.get(CmsPage, page_id) is not None
+
+
+def test_admin_can_delete_non_system_cms_page(client):
+    headers = create_admin_headers(client)
+
+    page = CmsPage(
+        url="/terms/",
+        title="Terms",
+        content="Terms content",
+        page_type="legal",
+        status="draft",
+        is_system_page=False,
+    )
+    db.session.add(page)
+    db.session.commit()
+
+    delete_response = client.delete(f"/api/v1/admin/pages/{page.id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert db.session.get(CmsPage, page.id) is None
+
+
+def test_public_can_resolve_published_cms_page(client):
+    page = CmsPage(
+        page_key="privacy_policy",
+        url="/privacy-policy",
+        title="Privacy Policy",
+        page_type="legal",
+        status="published",
+        excerpt="Privacy details",
+        content="<p>Privacy content</p>",
+        meta_title="Privacy Policy | TechHive",
+        meta_description="Privacy policy page",
+        registration_required=False,
+        is_system_page=True,
+        allow_indexing=True,
+    )
+    db.session.add(page)
+    db.session.commit()
+
+    resolve_response = client.get("/api/v1/content/pages/resolve?url=/privacy-policy")
+    assert resolve_response.status_code == 200
+    assert resolve_response.get_json()["item"]["page_key"] == "privacy_policy"
+
+    key_response = client.get("/api/v1/content/pages/privacy_policy")
+    assert key_response.status_code == 200
+    assert key_response.get_json()["item"]["url"] == "/privacy-policy"
+
+
+def test_public_cannot_read_unpublished_or_protected_cms_page(client):
+    draft_page = CmsPage(
+        page_key="draft_policy",
+        url="/draft-policy",
+        title="Draft Policy",
+        page_type="policy",
+        status="draft",
+        content="<p>Draft</p>",
+        registration_required=False,
+    )
+    protected_page = CmsPage(
+        page_key="private_policy",
+        url="/private-policy",
+        title="Private Policy",
+        page_type="policy",
+        status="published",
+        content="<p>Private</p>",
+        registration_required=True,
+    )
+    db.session.add_all([draft_page, protected_page])
+    db.session.commit()
+
+    draft_response = client.get("/api/v1/content/pages/resolve?url=/draft-policy")
+    assert draft_response.status_code == 404
+
+    protected_response = client.get("/api/v1/content/pages/private_policy")
+    assert protected_response.status_code == 404

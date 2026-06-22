@@ -222,6 +222,171 @@ def validate_supplier_create_payload(payload: dict | None) -> dict:
     }
 
 
+def validate_integration_connection_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    errors = {}
+
+    name = str(data.get("name", "")).strip()
+    if not name:
+        errors["name"] = "name is required."
+
+    connection_type = str(data.get("connection_type", "")).strip().lower()
+    if not connection_type:
+        errors["connection_type"] = "connection_type is required."
+
+    base_url = str(data.get("base_url", "")).strip()
+    if not base_url:
+        errors["base_url"] = "base_url is required."
+
+    auth_type = str(data.get("auth_type", "")).strip().lower()
+    if not auth_type:
+        errors["auth_type"] = "auth_type is required."
+
+    credential_source = str(data.get("credential_source", "environment")).strip().lower()
+    if not credential_source:
+        errors["credential_source"] = "credential_source is required."
+
+    partner_id = data.get("partner_id")
+    normalized_partner_id = None
+    if partner_id not in (None, "", 0):
+        try:
+            normalized_partner_id = int(partner_id)
+            if normalized_partner_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors["partner_id"] = "partner_id must be a positive integer."
+
+    poll_interval_minutes = data.get("poll_interval_minutes")
+    normalized_poll_interval = None
+    if poll_interval_minutes not in (None, ""):
+        try:
+            normalized_poll_interval = int(poll_interval_minutes)
+            if normalized_poll_interval <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors["poll_interval_minutes"] = "poll_interval_minutes must be a positive integer."
+
+    if errors:
+        return {"errors": errors}
+
+    credential_values = data.get("credential_values")
+    normalized_credential_values = {}
+    if credential_values not in (None, ""):
+        if not isinstance(credential_values, dict):
+            return {"errors": {"credential_values": "credential_values must be an object."}}
+        for key, value in credential_values.items():
+            normalized_key = str(key or "").strip()
+            if not normalized_key:
+                continue
+            normalized_credential_values[normalized_key] = str(value or "").strip()
+
+    return {
+        "name": name,
+        "partner_id": normalized_partner_id,
+        "connection_type": connection_type,
+        "base_url": base_url,
+        "auth_type": auth_type,
+        "credential_source": credential_source,
+        "secret_env_prefix": str(data.get("secret_env_prefix") or "").strip() or None,
+        "credential_values": normalized_credential_values or None,
+        "default_company": str(data.get("default_company") or "").strip() or None,
+        "default_warehouse": str(data.get("default_warehouse") or "").strip() or None,
+        "poll_interval_minutes": normalized_poll_interval,
+        "status": str(data.get("status") or "draft").strip().lower() or "draft",
+        "is_active": bool(data.get("is_active", True)),
+    }
+
+
+def validate_integration_connection_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    allowed_fields = {
+        "name",
+        "partner_id",
+        "connection_type",
+        "base_url",
+        "auth_type",
+        "credential_source",
+        "secret_env_prefix",
+        "credential_values",
+        "default_company",
+        "default_warehouse",
+        "poll_interval_minutes",
+        "status",
+        "is_active",
+    }
+    provided_fields = {field for field in allowed_fields if field in data}
+    if not provided_fields:
+        return {"errors": {"integration": "At least one integration field must be provided."}}
+
+    normalized = {"provided_fields": provided_fields}
+    errors = {}
+
+    if "name" in provided_fields:
+        value = str(data.get("name", "")).strip()
+        if not value:
+            errors["name"] = "name cannot be blank."
+        else:
+            normalized["name"] = value
+
+    if "partner_id" in provided_fields:
+        partner_id = data.get("partner_id")
+        if partner_id in (None, "", 0):
+            normalized["partner_id"] = None
+        else:
+            try:
+                normalized["partner_id"] = int(partner_id)
+                if normalized["partner_id"] <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors["partner_id"] = "partner_id must be a positive integer."
+
+    for field in ("connection_type", "base_url", "auth_type", "credential_source", "status"):
+        if field in provided_fields:
+            value = str(data.get(field, "")).strip().lower()
+            if not value:
+                errors[field] = f"{field} cannot be blank."
+            else:
+                normalized[field] = value
+
+    for field in ("secret_env_prefix", "default_company", "default_warehouse"):
+        if field in provided_fields:
+            normalized[field] = str(data.get(field) or "").strip() or None
+
+    if "credential_values" in provided_fields:
+        credential_values = data.get("credential_values")
+        if credential_values in (None, ""):
+            normalized["credential_values"] = None
+        elif not isinstance(credential_values, dict):
+            errors["credential_values"] = "credential_values must be an object."
+        else:
+            normalized_values = {}
+            for key, value in credential_values.items():
+                normalized_key = str(key or "").strip()
+                if not normalized_key:
+                    continue
+                normalized_values[normalized_key] = str(value or "").strip()
+            normalized["credential_values"] = normalized_values or None
+
+    if "poll_interval_minutes" in provided_fields:
+        raw = data.get("poll_interval_minutes")
+        if raw in (None, ""):
+            normalized["poll_interval_minutes"] = None
+        else:
+            try:
+                normalized["poll_interval_minutes"] = int(raw)
+                if normalized["poll_interval_minutes"] <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors["poll_interval_minutes"] = "poll_interval_minutes must be a positive integer."
+
+    if "is_active" in provided_fields:
+        normalized["is_active"] = bool(data.get("is_active"))
+
+    if errors:
+        return {"errors": errors}
+    return normalized
+
+
 def _coerce_optional_datetime(value):
     if value in (None, ""):
         return None
@@ -1389,6 +1554,15 @@ def validate_admin_product_payload(payload: dict | None) -> dict:
         except (TypeError, ValueError):
             errors["compare_at_price"] = "compare_at_price must be a non-negative number."
 
+    weight_grams = None
+    if data.get("weight_grams", data.get("weight")) not in (None, ""):
+        try:
+            weight_grams = int(data.get("weight_grams", data.get("weight")))
+            if weight_grams < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors["weight_grams"] = "weight_grams must be a non-negative integer."
+
     slug = str(data.get("slug") or "").strip() or _slugify_text(name)
     if not slug:
         errors["slug"] = "slug is required."
@@ -1416,6 +1590,8 @@ def validate_admin_product_payload(payload: dict | None) -> dict:
         "currency": currency,
         "stock_quantity": stock_quantity,
         "low_stock_threshold": low_stock_threshold,
+        "weight_grams": weight_grams,
+        "dimensions_text": str(data.get("dimensions_text", data.get("dimensions")) or "").strip() or None,
         "short_description": str(data.get("short_description") or "").strip() or None,
         "description": str(data.get("description") or "").strip() or None,
         "is_active": bool(data.get("is_active", True)),
@@ -1437,6 +1613,8 @@ def validate_admin_product_update_payload(payload: dict | None) -> dict:
         "currency",
         "stock_quantity",
         "low_stock_threshold",
+        "weight_grams",
+        "dimensions_text",
         "short_description",
         "description",
         "is_active",
@@ -1543,6 +1721,22 @@ def validate_admin_product_update_payload(payload: dict | None) -> dict:
             normalized["low_stock_threshold"] = low_stock_threshold
         except (TypeError, ValueError):
             errors["low_stock_threshold"] = "low_stock_threshold must be a non-negative integer."
+
+    if "weight_grams" in provided_fields:
+        raw_weight = data.get("weight_grams")
+        if raw_weight in (None, ""):
+            normalized["weight_grams"] = None
+        else:
+            try:
+                weight_grams = int(raw_weight)
+                if weight_grams < 0:
+                    raise ValueError
+                normalized["weight_grams"] = weight_grams
+            except (TypeError, ValueError):
+                errors["weight_grams"] = "weight_grams must be a non-negative integer."
+
+    if "dimensions_text" in provided_fields:
+        normalized["dimensions_text"] = str(data.get("dimensions_text") or "").strip() or None
 
     if "short_description" in provided_fields:
         normalized["short_description"] = str(data.get("short_description") or "").strip() or None
@@ -1844,6 +2038,145 @@ def validate_banner_update_payload(payload: dict | None) -> dict:
             normalized["sort_order"] = int(data.get("sort_order"))
         except (TypeError, ValueError):
             errors["sort_order"] = "sort_order must be an integer."
+
+    if errors:
+        return {"errors": errors}
+    return normalized
+
+
+def validate_cms_page_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    errors = {}
+
+    url = str(data.get("url", "")).strip()
+    if not url:
+        errors["url"] = "url is required."
+
+    title = str(data.get("title", "")).strip()
+    if not title:
+        errors["title"] = "title is required."
+
+    page_type = str(data.get("page_type") or "custom").strip().lower()
+    allowed_types = {"policy", "help", "marketing", "legal", "custom"}
+    if page_type not in allowed_types:
+        errors["page_type"] = "page_type must be one of: policy, help, marketing, legal, custom."
+
+    status = str(data.get("status") or "draft").strip().lower()
+    allowed_statuses = {"draft", "published", "archived"}
+    if status not in allowed_statuses:
+        errors["status"] = "status must be one of: draft, published, archived."
+
+    page_key = str(data.get("page_key") or "").strip().lower() or None
+    if page_key and not re.fullmatch(r"[a-z0-9_]+", page_key):
+        errors["page_key"] = "page_key may only contain lowercase letters, numbers, and underscores."
+
+    is_system_page = bool(data.get("is_system_page", False))
+    if is_system_page and not page_key:
+        errors["page_key"] = "page_key is required for system pages."
+
+    if errors:
+        return {"errors": errors}
+
+    return {
+        "url": url,
+        "page_key": page_key,
+        "page_type": page_type,
+        "status": status,
+        "title": title,
+        "excerpt": str(data.get("excerpt") or "").strip() or None,
+        "content": str(data.get("content") or ""),
+        "meta_title": str(data.get("meta_title") or "").strip() or None,
+        "meta_description": str(data.get("meta_description") or "").strip() or None,
+        "registration_required": bool(data.get("registration_required", False)),
+        "is_system_page": is_system_page,
+        "allow_indexing": bool(data.get("allow_indexing", True)),
+    }
+
+
+def validate_cms_page_update_payload(payload: dict | None) -> dict:
+    data = payload or {}
+    allowed_fields = {
+        "url",
+        "page_key",
+        "page_type",
+        "status",
+        "title",
+        "excerpt",
+        "content",
+        "meta_title",
+        "meta_description",
+        "registration_required",
+        "is_system_page",
+        "allow_indexing",
+    }
+    provided_fields = {field for field in allowed_fields if field in data}
+    if not provided_fields:
+        return {"errors": {"page": "At least one page field must be provided."}}
+
+    normalized = {"provided_fields": provided_fields}
+    errors = {}
+
+    if "url" in provided_fields:
+        value = str(data.get("url", "")).strip()
+        if not value:
+            errors["url"] = "url cannot be blank."
+        else:
+            normalized["url"] = value
+
+    if "title" in provided_fields:
+        value = str(data.get("title", "")).strip()
+        if not value:
+            errors["title"] = "title cannot be blank."
+        else:
+            normalized["title"] = value
+
+    if "page_key" in provided_fields:
+        raw_value = str(data.get("page_key") or "").strip().lower()
+        if raw_value and not re.fullmatch(r"[a-z0-9_]+", raw_value):
+            errors["page_key"] = "page_key may only contain lowercase letters, numbers, and underscores."
+        normalized["page_key"] = raw_value or None
+
+    if "page_type" in provided_fields:
+        value = str(data.get("page_type", "")).strip().lower()
+        allowed_types = {"policy", "help", "marketing", "legal", "custom"}
+        if value not in allowed_types:
+            errors["page_type"] = "page_type must be one of: policy, help, marketing, legal, custom."
+        else:
+            normalized["page_type"] = value
+
+    if "status" in provided_fields:
+        value = str(data.get("status", "")).strip().lower()
+        allowed_statuses = {"draft", "published", "archived"}
+        if value not in allowed_statuses:
+            errors["status"] = "status must be one of: draft, published, archived."
+        else:
+            normalized["status"] = value
+
+    if "excerpt" in provided_fields:
+        normalized["excerpt"] = str(data.get("excerpt") or "").strip() or None
+
+    if "content" in provided_fields:
+        normalized["content"] = str(data.get("content") or "")
+
+    if "meta_title" in provided_fields:
+        normalized["meta_title"] = str(data.get("meta_title") or "").strip() or None
+
+    if "meta_description" in provided_fields:
+        normalized["meta_description"] = str(data.get("meta_description") or "").strip() or None
+
+    if "registration_required" in provided_fields:
+        normalized["registration_required"] = bool(data.get("registration_required"))
+
+    if "is_system_page" in provided_fields:
+        normalized["is_system_page"] = bool(data.get("is_system_page"))
+
+    if "allow_indexing" in provided_fields:
+        normalized["allow_indexing"] = bool(data.get("allow_indexing"))
+
+    candidate_is_system = normalized.get("is_system_page", bool(data.get("is_system_page", False)))
+    candidate_page_key = normalized.get("page_key", str(data.get("page_key") or "").strip().lower() or None)
+    if candidate_is_system and not candidate_page_key:
+        errors["page_key"] = "page_key is required for system pages."
 
     if errors:
         return {"errors": errors}

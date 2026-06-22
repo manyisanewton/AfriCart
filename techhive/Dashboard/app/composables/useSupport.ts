@@ -7,6 +7,7 @@ export interface AdminSupportTicketItem {
   subject: string
   message: string
   category: string
+  context_data: Record<string, string>
   status: 'open' | 'in_progress' | 'resolved' | 'closed'
   admin_note: string | null
   resolved_at: string | null
@@ -27,6 +28,7 @@ export interface SupportTicketRow {
   resolvedAt: string | null
   adminNote: string
   message: string
+  contextData: Record<string, string>
   raw?: AdminSupportTicketItem
 }
 
@@ -59,6 +61,7 @@ function mapTicketToRow(ticket: AdminSupportTicketItem): SupportTicketRow {
     phoneNumber: ticket.phone_number || '',
     subject: ticket.subject,
     category: ticket.category || 'general',
+    contextData: ticket.context_data || {},
     status: ticket.status,
     createdAt: ticket.created_at,
     updatedAt: ticket.updated_at,

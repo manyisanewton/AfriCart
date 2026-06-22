@@ -26,6 +26,7 @@ class SupportTicket(db.Model):
     subject = db.Column(db.String(200), nullable=False)
     message = db.Column(db.Text, nullable=False)
     category = db.Column(db.String(80), nullable=False, default="general")
+    context_data = db.Column(db.JSON, nullable=True)
     status = db.Column(
         db.Enum(SupportTicketStatus, name="support_ticket_status"),
         nullable=False,

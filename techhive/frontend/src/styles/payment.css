@@ -1,0 +1,141 @@
+.payment-page {
+  padding: 32px 20px 48px;
+  background: linear-gradient(180deg, #f8fbff 0%, #edf4ff 100%);
+}
+
+.payment-layout {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  gap: 24px;
+}
+
+.payment-card {
+  background: #fff;
+  border: 1px solid #d8e1f0;
+  border-radius: 20px;
+  padding: 28px;
+  box-shadow: 0 16px 40px rgba(11, 27, 58, 0.08);
+}
+
+.payment-eyebrow {
+  margin: 0 0 8px;
+  color: #f97316;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.payment-card h1,
+.payment-card h2 {
+  margin: 0 0 12px;
+  color: #0b1b3a;
+}
+
+.payment-copy {
+  color: #5f6f8c;
+  line-height: 1.6;
+}
+
+.payment-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.payment-stat,
+.payment-item,
+.payment-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.payment-stat {
+  flex-direction: column;
+  padding: 16px;
+  background: #f7f9fd;
+  border-radius: 14px;
+}
+
+.payment-stat span,
+.payment-item span,
+.payment-line span {
+  color: #6b7b98;
+}
+
+.payment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.payment-error {
+  color: #c62828;
+  font-weight: 600;
+  margin: 0;
+}
+
+.payment-result {
+  margin-top: 20px;
+  padding: 18px;
+  border-radius: 16px;
+  background: #eff9f0;
+  border: 1px solid #b6ddbb;
+}
+
+.payment-items {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 20px 0;
+}
+
+.payment-item {
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.payment-item div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.payment-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid #e3eaf5;
+}
+
+.payment-line.total {
+  font-weight: 700;
+  color: #0b1b3a;
+}
+
+.payment-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 20px;
+  background: #eef3fb;
+  color: #0b1b3a;
+}
+
+@media (max-width: 900px) {
+  .payment-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .payment-status-grid {
+    grid-template-columns: 1fr;
+  }
+}

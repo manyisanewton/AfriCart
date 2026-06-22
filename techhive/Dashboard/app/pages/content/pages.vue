@@ -17,10 +17,32 @@ const saveError = ref('')
 
 const form = reactive({
   url: '',
+  page_key: '',
+  page_type: 'custom',
+  status: 'draft',
   title: '',
+  excerpt: '',
   content: '',
+  meta_title: '',
+  meta_description: '',
   registration_required: false,
+  is_system_page: false,
+  allow_indexing: true,
 })
+
+const pageTypeOptions = [
+  { label: 'Custom', value: 'custom' },
+  { label: 'Policy', value: 'policy' },
+  { label: 'Help', value: 'help' },
+  { label: 'Marketing', value: 'marketing' },
+  { label: 'Legal', value: 'legal' },
+]
+
+const pageStatusOptions = [
+  { label: 'Draft', value: 'draft' },
+  { label: 'Published', value: 'published' },
+  { label: 'Archived', value: 'archived' },
+]
 
 const filteredPages = computed(() => {
   const search = searchQuery.value.trim().toLowerCase()
@@ -35,22 +57,57 @@ const filteredPages = computed(() => {
 
 const publicPageCount = computed(() => pages.value.filter(page => !page.registration_required).length)
 const protectedPageCount = computed(() => pages.value.filter(page => page.registration_required).length)
-const contentLength = computed(() => pages.value.reduce((total, page) => total + Number(page.content?.length || 0), 0))
+const publishedPageCount = computed(() => pages.value.filter(page => page.status === 'published').length)
+const systemPageCount = computed(() => pages.value.filter(page => page.is_system_page).length)
+
+function statusColor(status: string) {
+  if (status === 'published')
+    return 'success'
+  if (status === 'archived')
+    return 'neutral'
+  return 'warning'
+}
+
+function typeColor(type: string) {
+  if (type === 'policy' || type === 'legal')
+    return 'error'
+  if (type === 'help')
+    return 'primary'
+  if (type === 'marketing')
+    return 'warning'
+  return 'neutral'
+}
 
 function resetForm() {
   editingPage.value = null
   saveError.value = ''
   form.url = ''
+  form.page_key = ''
+  form.page_type = 'custom'
+  form.status = 'draft'
   form.title = ''
+  form.excerpt = ''
   form.content = ''
+  form.meta_title = ''
+  form.meta_description = ''
   form.registration_required = false
+  form.is_system_page = false
+  form.allow_indexing = true
 }
 
 function fillForm(page: CmsPageItem) {
   form.url = page.url || ''
+  form.page_key = page.page_key || ''
+  form.page_type = page.page_type || 'custom'
+  form.status = page.status || 'draft'
   form.title = page.title || ''
+  form.excerpt = page.excerpt || ''
   form.content = page.content || ''
+  form.meta_title = page.meta_title || ''
+  form.meta_description = page.meta_description || ''
   form.registration_required = !!page.registration_required
+  form.is_system_page = !!page.is_system_page
+  form.allow_indexing = page.allow_indexing !== false
 }
 
 function normalizeUrl(value: string) {
@@ -122,9 +179,17 @@ async function submitPage() {
   isSaving.value = true
   const payload: CmsPagePayload = {
     url: normalizedUrl,
+    page_key: form.page_key.trim() || null,
+    page_type: form.page_type,
+    status: form.status,
     title: form.title.trim(),
+    excerpt: form.excerpt.trim() || null,
     content: form.content,
+    meta_title: form.meta_title.trim() || null,
+    meta_description: form.meta_description.trim() || null,
     registration_required: form.registration_required,
+    is_system_page: form.is_system_page,
+    allow_indexing: form.allow_indexing,
   }
   const result = editingPage.value
     ? await updatePage(editingPage.value.id, payload)
@@ -175,7 +240,7 @@ onMounted(loadPages)
     <div class="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
         <h1 class="text-2xl font-black text-slate-950">Pages</h1>
-        <p class="mt-1 text-sm text-slate-500">Manage CMS flat pages used for storefront content and policies.</p>
+        <p class="mt-1 text-sm text-slate-500">Manage CMS pages, policies, system pages, publish status, and SEO metadata.</p>
       </div>
       <div class="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
         <UInput
@@ -202,7 +267,8 @@ onMounted(loadPages)
       <CardsKpiCard2 name="Total pages" :value="totalItems" :budget="totalItems" color="#3d7cff" icon="i-lucide-files" :loading="isLoading" />
       <CardsKpiCard2 name="Public" :value="publicPageCount" :budget="pages.length || 1" color="#059669" icon="i-lucide-globe" :loading="isLoading" />
       <CardsKpiCard2 name="Protected" :value="protectedPageCount" :budget="pages.length || 1" color="#f59e0b" icon="i-lucide-lock" :loading="isLoading" />
-      <CardsKpiCard2 name="Characters" :value="contentLength" :budget="contentLength || 1" color="#7c3aed" icon="i-lucide-type" :loading="isLoading" />
+      <CardsKpiCard2 name="Published" :value="publishedPageCount" :budget="pages.length || 1" color="#7c3aed" icon="i-lucide-badge-check" :loading="isLoading" />
+      <CardsKpiCard2 name="System pages" :value="systemPageCount" :budget="pages.length || 1" color="#0f766e" icon="i-lucide-shield-check" :loading="isLoading" />
     </div>
 
     <div class="grid grid-cols-1 gap-6 xl:grid-cols-5">
@@ -210,8 +276,8 @@ onMounted(loadPages)
         <div class="grid grid-cols-12 gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
           <div class="col-span-4">Page</div>
           <div class="col-span-3">URL</div>
-          <div class="col-span-2">Access</div>
-          <div class="col-span-1 text-right">Length</div>
+          <div class="col-span-2">Type / Status</div>
+          <div class="col-span-1 text-right">Access</div>
           <div class="col-span-2 text-right">Actions</div>
         </div>
 
@@ -240,12 +306,22 @@ onMounted(loadPages)
             <p class="truncate text-xs text-slate-500">Page #{{ page.id }}</p>
           </div>
           <div class="col-span-3 truncate text-sm font-semibold text-slate-700">{{ page.url }}</div>
-          <div class="col-span-2">
-            <UBadge :color="page.registration_required ? 'warning' : 'success'" variant="soft">
-              {{ page.registration_required ? 'Login required' : 'Public' }}
+          <div class="col-span-2 flex flex-wrap gap-1">
+            <UBadge :color="typeColor(page.page_type)" variant="soft">
+              {{ page.page_type }}
+            </UBadge>
+            <UBadge :color="statusColor(page.status)" variant="soft">
+              {{ page.status }}
+            </UBadge>
+            <UBadge v-if="page.is_system_page" color="primary" variant="soft">
+              System
             </UBadge>
           </div>
-          <div class="col-span-1 text-right text-sm font-semibold text-slate-700">{{ page.content?.length || 0 }}</div>
+          <div class="col-span-1 text-right">
+            <UBadge :color="page.registration_required ? 'warning' : 'success'" variant="soft">
+              {{ page.registration_required ? 'Login' : 'Public' }}
+            </UBadge>
+          </div>
           <div class="col-span-2 flex justify-end gap-1">
             <UTooltip text="View detail">
               <UButton icon="i-lucide-panel-right-open" color="neutral" variant="ghost" square @click="openDetail(page)" />
@@ -254,7 +330,7 @@ onMounted(loadPages)
               <UButton icon="i-lucide-pencil" color="neutral" variant="ghost" square @click="openEditPage(page)" />
             </UTooltip>
             <UTooltip text="Delete page">
-              <UButton icon="i-lucide-trash-2" color="error" variant="ghost" square @click="pendingDeletePage = page" />
+              <UButton icon="i-lucide-trash-2" color="error" variant="ghost" square :disabled="page.is_system_page" @click="pendingDeletePage = page" />
             </UTooltip>
           </div>
         </div>
@@ -275,24 +351,38 @@ onMounted(loadPages)
             <div class="min-w-0">
               <p class="truncate text-lg font-black text-slate-950">{{ selectedPage.title }}</p>
               <p class="truncate text-sm text-slate-500">{{ selectedPage.url }}</p>
+              <p v-if="selectedPage.page_key" class="mt-1 truncate text-xs uppercase tracking-wide text-slate-400">{{ selectedPage.page_key }}</p>
             </div>
-            <UBadge :color="selectedPage.registration_required ? 'warning' : 'success'" variant="soft">
-              {{ selectedPage.registration_required ? 'Login required' : 'Public' }}
-            </UBadge>
+            <div class="flex flex-wrap gap-1">
+              <UBadge :color="statusColor(selectedPage.status)" variant="soft">{{ selectedPage.status }}</UBadge>
+              <UBadge :color="typeColor(selectedPage.page_type)" variant="soft">{{ selectedPage.page_type }}</UBadge>
+              <UBadge v-if="selectedPage.is_system_page" color="primary" variant="soft">System</UBadge>
+              <UBadge :color="selectedPage.registration_required ? 'warning' : 'success'" variant="soft">
+                {{ selectedPage.registration_required ? 'Login required' : 'Public' }}
+              </UBadge>
+            </div>
           </div>
 
           <div class="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p class="line-clamp-6 text-sm leading-6 text-slate-700">{{ excerpt(selectedPage.content) }}</p>
+            <p class="line-clamp-6 text-sm leading-6 text-slate-700">{{ selectedPage.excerpt || excerpt(selectedPage.content) }}</p>
           </div>
 
           <dl class="space-y-3 text-sm">
             <div>
-              <dt class="font-semibold text-slate-500">Content length</dt>
-              <dd class="mt-1 text-slate-950">{{ selectedPage.content?.length || 0 }} characters</dd>
+              <dt class="font-semibold text-slate-500">SEO title</dt>
+              <dd class="mt-1 text-slate-950">{{ selectedPage.meta_title || '-' }}</dd>
             </div>
             <div>
-              <dt class="font-semibold text-slate-500">Page ID</dt>
-              <dd class="mt-1 text-slate-950">{{ selectedPage.id }}</dd>
+              <dt class="font-semibold text-slate-500">SEO description</dt>
+              <dd class="mt-1 text-slate-950">{{ selectedPage.meta_description || '-' }}</dd>
+            </div>
+            <div>
+              <dt class="font-semibold text-slate-500">Published at</dt>
+              <dd class="mt-1 text-slate-950">{{ selectedPage.published_at || '-' }}</dd>
+            </div>
+            <div>
+              <dt class="font-semibold text-slate-500">Updated by</dt>
+              <dd class="mt-1 text-slate-950">{{ selectedPage.updated_by_name || '-' }}</dd>
             </div>
           </dl>
 
@@ -301,7 +391,7 @@ onMounted(loadPages)
               <UIcon name="i-lucide-pencil" />
               Edit Page
             </UButton>
-            <UButton color="error" variant="outline" @click="pendingDeletePage = selectedPage">
+            <UButton color="error" variant="outline" :disabled="selectedPage.is_system_page" @click="pendingDeletePage = selectedPage">
               <UIcon name="i-lucide-trash-2" />
               Delete
             </UButton>
@@ -318,7 +408,7 @@ onMounted(loadPages)
           <div class="flex items-center justify-between gap-4">
             <div>
               <h3 class="font-semibold text-default">{{ editingPage ? 'Edit page' : 'New page' }}</h3>
-              <p class="text-sm text-dimmed">Configure flat-page content and access.</p>
+              <p class="text-sm text-dimmed">Configure page identity, publishing, access, and SEO metadata.</p>
             </div>
             <UButton icon="i-lucide-x" color="neutral" variant="ghost" square @click="editorOpen = false" />
           </div>
@@ -329,12 +419,34 @@ onMounted(loadPages)
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <UFormField label="Title" required><UInput v-model="form.title" autocomplete="off" /></UFormField>
           <UFormField label="URL" required><UInput v-model="form.url" autocomplete="off" placeholder="/about/" /></UFormField>
+          <UFormField label="Page key"><UInput v-model="form.page_key" autocomplete="off" placeholder="privacy_policy" /></UFormField>
+          <UFormField label="Page type"><USelect v-model="form.page_type" :items="pageTypeOptions" /></UFormField>
+          <UFormField label="Status"><USelect v-model="form.status" :items="pageStatusOptions" /></UFormField>
+          <UFormField label="Excerpt"><UTextarea v-model="form.excerpt" :rows="3" /></UFormField>
           <UFormField label="Content" class="md:col-span-2"><UTextarea v-model="form.content" :rows="12" /></UFormField>
+          <UFormField label="Meta title" class="md:col-span-2"><UInput v-model="form.meta_title" autocomplete="off" /></UFormField>
+          <UFormField label="Meta description" class="md:col-span-2"><UTextarea v-model="form.meta_description" :rows="3" /></UFormField>
           <div class="md:col-span-2 flex items-center gap-3 rounded-lg border border-slate-200 p-3">
             <UCheckbox v-model="form.registration_required" />
             <div>
               <p class="text-sm font-semibold text-slate-950">Require login</p>
               <p class="text-xs text-slate-500">Only authenticated users can view this page.</p>
+            </div>
+          </div>
+          <div class="md:col-span-2 grid grid-cols-1 gap-3 rounded-lg border border-slate-200 p-3 md:grid-cols-2">
+            <div class="flex items-center gap-3">
+              <UCheckbox v-model="form.is_system_page" />
+              <div>
+                <p class="text-sm font-semibold text-slate-950">System page</p>
+                <p class="text-xs text-slate-500">Protects canonical business pages from accidental deletion.</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <UCheckbox v-model="form.allow_indexing" />
+              <div>
+                <p class="text-sm font-semibold text-slate-950">Allow indexing</p>
+                <p class="text-xs text-slate-500">Search engines may index this page when public.</p>
+              </div>
             </div>
           </div>
         </div>

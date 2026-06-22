@@ -31,6 +31,8 @@ class Product(db.Model):
     currency = db.Column(db.String(3), nullable=False, default="KES")
     stock_quantity = db.Column(db.Integer, nullable=False, default=0)
     low_stock_threshold = db.Column(db.Integer, nullable=False, default=5)
+    weight_grams = db.Column(db.Integer, nullable=True)
+    dimensions_text = db.Column(db.String(120), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     is_featured = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)

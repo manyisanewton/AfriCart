@@ -22,7 +22,8 @@ class Order(db.Model):
     __tablename__ = "orders"
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    guest_email = db.Column(db.String(255), nullable=True, index=True)
     order_number = db.Column(db.String(40), nullable=False, unique=True, index=True)
     status = db.Column(
         db.Enum(OrderStatus, name="order_status"),
@@ -52,6 +53,11 @@ class Order(db.Model):
     shipping_postal_code = db.Column(db.String(30), nullable=True)
     shipping_address_line_1 = db.Column(db.String(255), nullable=False)
     shipping_address_line_2 = db.Column(db.String(255), nullable=True)
+    delivery_location_label = db.Column(db.String(255), nullable=True)
+    delivery_latitude = db.Column(db.Numeric(10, 7), nullable=True)
+    delivery_longitude = db.Column(db.Numeric(10, 7), nullable=True)
+    delivery_distance_km = db.Column(db.Numeric(10, 2), nullable=True)
+    shipping_weight_grams = db.Column(db.Integer, nullable=True)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(

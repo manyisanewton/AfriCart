@@ -8,6 +8,7 @@ from app.blueprints.addresses import addresses_bp
 from app.blueprints.auth import auth_bp
 from app.blueprints.admin import admin_bp
 from app.blueprints.cart import cart_bp
+from app.blueprints.checkout import checkout_bp
 from app.blueprints.customers import customers_bp
 from app.blueprints.delivery import delivery_bp
 from app.blueprints.notifications import notifications_bp
@@ -27,6 +28,7 @@ from app.services.error_monitoring_service import (
     register_request_context,
 )
 from app.services.bootstrap_admin_service import ensure_bootstrap_admin
+from app.services.cms_page_service import ensure_system_cms_pages
 from app.services.payment_metrics_service import render_payment_metrics_lines
 from app.services.runtime_config_service import (
     get_runtime_config_report,
@@ -51,6 +53,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
     with app.app_context():
         ensure_bootstrap_admin()
+        ensure_system_cms_pages()
 
     return app
 
@@ -95,6 +98,7 @@ def register_routes(app: Flask) -> None:
     app.register_blueprint(addresses_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(cart_bp)
+    app.register_blueprint(checkout_bp)
     app.register_blueprint(customers_bp)
     app.register_blueprint(delivery_bp)
     app.register_blueprint(notifications_bp)

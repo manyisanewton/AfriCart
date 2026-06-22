@@ -81,6 +81,8 @@ def serialize_product(product, include_related: bool = False) -> dict:
         "currency": product.currency,
         "stock_quantity": product.stock_quantity,
         "low_stock_threshold": product.low_stock_threshold,
+        "weight_grams": product.weight_grams,
+        "dimensions_text": product.dimensions_text,
         "in_stock": product.in_stock,
         "is_active": product.is_active,
         "is_featured": product.is_featured,

@@ -5,9 +5,11 @@ from app.models.banner import Banner
 from app.models.brand import Brand
 from app.models.cart import CartItem
 from app.models.category import Category
+from app.models.cms_page import CmsPage
 from app.models.delivery_agent import DeliveryAgent
 from app.models.delivery_zone import DeliveryZone
 from app.models.flash_sale import FlashSale
+from app.models.integration import IntegrationConnection, IntegrationLog
 from app.models.notification import Notification, NotificationType
 from app.models.notification_delivery import (
     NotificationChannel,
@@ -50,9 +52,12 @@ __all__ = [
     "Brand",
     "CartItem",
     "Category",
+    "CmsPage",
     "DeliveryAgent",
     "DeliveryZone",
     "FlashSale",
+    "IntegrationConnection",
+    "IntegrationLog",
     "Notification",
     "NotificationChannel",
     "NotificationDelivery",

@@ -7,6 +7,11 @@ const UBadge = resolveComponent('UBadge')
 
 const toast = useToast()
 const {
+  createPlatformSetting,
+  getPlatformSettings,
+  updatePlatformSetting,
+} = useSettings()
+const {
   createZone,
   deleteZone,
   getDeliveryAgents,
@@ -26,6 +31,7 @@ const saveError = ref('')
 const zones = ref<ShippingZoneItem[]>([])
 const agents = ref<DeliveryAgentItem[]>([])
 const orders = ref<ShippingOrderItem[]>([])
+const isSavingPricing = ref(false)
 
 const zoneEditorOpen = ref(false)
 const orderEditorOpen = ref(false)
@@ -48,6 +54,30 @@ const orderForm = reactive({
   tracking_token: '',
   notes: '',
 })
+
+const deliveryPricingForm = reactive({
+  origin_label: 'TechHive dispatch centre',
+  origin_latitude: '-1.286389',
+  origin_longitude: '36.817223',
+  base_fee: '150',
+  per_km_fee: '35',
+  per_kg_fee: '25',
+  minimum_fee: '150',
+  free_distance_km: '0',
+  max_service_distance_km: '80',
+})
+
+const deliverySettingMeta: Record<string, string> = {
+  origin_label: 'Delivery origin label shown for live quotes.',
+  origin_latitude: 'Dispatch latitude used for distance-based delivery quotes.',
+  origin_longitude: 'Dispatch longitude used for distance-based delivery quotes.',
+  base_fee: 'Base fee applied to every distance-based delivery quote.',
+  per_km_fee: 'Additional charge applied per billable kilometre.',
+  per_kg_fee: 'Additional charge applied per kilogram of order weight.',
+  minimum_fee: 'Minimum delivery fee after weight and distance are applied.',
+  free_distance_km: 'Distance included before per-kilometre charges start.',
+  max_service_distance_km: 'Maximum supported delivery radius for live location quotes.',
+}
 
 const deliveryStatusOptions = [
   { label: 'All statuses', value: '__all__' },
@@ -183,10 +213,11 @@ function resetOrderForm() {
 async function loadShippingData() {
   isLoading.value = true
 
-  const [zonesResult, agentsResult, ordersResult] = await Promise.all([
+  const [zonesResult, agentsResult, ordersResult, settingsResult] = await Promise.all([
     getZones(),
     getDeliveryAgents(),
     getShippingOrders(),
+    getPlatformSettings(),
   ])
 
   if (zonesResult.success)
@@ -204,7 +235,71 @@ async function loadShippingData() {
   else
     toast.add({ title: 'Could not load shipping orders', description: ordersResult.error || 'Please try again.', color: 'error' })
 
+  if (settingsResult.success)
+    applyDeliverySettings(settingsResult.data || [])
+  else
+    toast.add({ title: 'Could not load delivery pricing settings', description: settingsResult.error || 'Please try again.', color: 'error' })
+
   isLoading.value = false
+}
+
+function applyDeliverySettings(settings: Array<{ key: string, value: string }>) {
+  const lookup = new Map(settings.map(setting => [setting.key, setting.value]))
+  deliveryPricingForm.origin_label = lookup.get('delivery.origin_label') || 'TechHive dispatch centre'
+  deliveryPricingForm.origin_latitude = lookup.get('delivery.origin_latitude') || '-1.286389'
+  deliveryPricingForm.origin_longitude = lookup.get('delivery.origin_longitude') || '36.817223'
+  deliveryPricingForm.base_fee = lookup.get('delivery.base_fee') || '150'
+  deliveryPricingForm.per_km_fee = lookup.get('delivery.per_km_fee') || '35'
+  deliveryPricingForm.per_kg_fee = lookup.get('delivery.per_kg_fee') || '25'
+  deliveryPricingForm.minimum_fee = lookup.get('delivery.minimum_fee') || '150'
+  deliveryPricingForm.free_distance_km = lookup.get('delivery.free_distance_km') || '0'
+  deliveryPricingForm.max_service_distance_km = lookup.get('delivery.max_service_distance_km') || '80'
+}
+
+async function saveDeliveryPricingSettings() {
+  isSavingPricing.value = true
+
+  const payloads = [
+    ['delivery.origin_label', deliveryPricingForm.origin_label],
+    ['delivery.origin_latitude', deliveryPricingForm.origin_latitude],
+    ['delivery.origin_longitude', deliveryPricingForm.origin_longitude],
+    ['delivery.base_fee', deliveryPricingForm.base_fee],
+    ['delivery.per_km_fee', deliveryPricingForm.per_km_fee],
+    ['delivery.per_kg_fee', deliveryPricingForm.per_kg_fee],
+    ['delivery.minimum_fee', deliveryPricingForm.minimum_fee],
+    ['delivery.free_distance_km', deliveryPricingForm.free_distance_km],
+    ['delivery.max_service_distance_km', deliveryPricingForm.max_service_distance_km],
+  ] as const
+
+  const currentSettingsResult = await getPlatformSettings()
+  if (!currentSettingsResult.success) {
+    isSavingPricing.value = false
+    toast.add({ title: 'Could not refresh settings', description: currentSettingsResult.error || 'Please try again.', color: 'error' })
+    return
+  }
+
+  const existing = new Set((currentSettingsResult.data || []).map(setting => setting.key))
+
+  for (const [key, value] of payloads) {
+    const request = existing.has(key)
+      ? updatePlatformSetting(key, { value })
+      : createPlatformSetting({
+          key,
+          value,
+          description: deliverySettingMeta[key.replace('delivery.', '')] || null,
+          is_public: false,
+        })
+
+    const result = await request
+    if (!result.success) {
+      isSavingPricing.value = false
+      toast.add({ title: 'Could not save delivery pricing', description: result.error || 'Please try again.', color: 'error' })
+      return
+    }
+  }
+
+  toast.add({ title: 'Delivery pricing updated', color: 'success' })
+  isSavingPricing.value = false
 }
 
 function openCreateZone() {
@@ -427,6 +522,49 @@ onMounted(loadShippingData)
       </div>
 
       <div class="space-y-6">
+        <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div class="border-b border-slate-200 px-6 py-4">
+            <h2 class="text-lg font-black text-slate-950">Delivery pricing</h2>
+            <p class="mt-1 text-sm text-slate-500">Control live delivery quotes using your dispatch location, weight rules, and distance pricing.</p>
+          </div>
+          <div class="grid grid-cols-1 gap-4 px-6 py-5 md:grid-cols-2">
+            <UFormField label="Origin label" class="md:col-span-2">
+              <UInput v-model="deliveryPricingForm.origin_label" placeholder="TechHive dispatch centre" />
+            </UFormField>
+            <UFormField label="Origin latitude">
+              <UInput v-model="deliveryPricingForm.origin_latitude" type="number" step="0.000001" />
+            </UFormField>
+            <UFormField label="Origin longitude">
+              <UInput v-model="deliveryPricingForm.origin_longitude" type="number" step="0.000001" />
+            </UFormField>
+            <UFormField label="Base fee">
+              <UInput v-model="deliveryPricingForm.base_fee" type="number" min="0" step="0.01" />
+            </UFormField>
+            <UFormField label="Per km fee">
+              <UInput v-model="deliveryPricingForm.per_km_fee" type="number" min="0" step="0.01" />
+            </UFormField>
+            <UFormField label="Per kg fee">
+              <UInput v-model="deliveryPricingForm.per_kg_fee" type="number" min="0" step="0.01" />
+            </UFormField>
+            <UFormField label="Minimum fee">
+              <UInput v-model="deliveryPricingForm.minimum_fee" type="number" min="0" step="0.01" />
+            </UFormField>
+            <UFormField label="Free distance (km)">
+              <UInput v-model="deliveryPricingForm.free_distance_km" type="number" min="0" step="0.01" />
+            </UFormField>
+            <UFormField label="Max service radius (km)">
+              <UInput v-model="deliveryPricingForm.max_service_distance_km" type="number" min="1" step="0.01" />
+            </UFormField>
+          </div>
+          <div class="border-t border-slate-200 px-6 py-4">
+            <div class="flex justify-end">
+              <UButton :loading="isSavingPricing" @click="saveDeliveryPricingSettings">
+                Save delivery pricing
+              </UButton>
+            </div>
+          </div>
+        </div>
+
         <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div class="border-b border-slate-200 px-6 py-4">
             <h2 class="text-lg font-black text-slate-950">Delivery agents</h2>

@@ -10,6 +10,7 @@ def validate_support_ticket_payload(payload: dict | None) -> dict:
     subject = str(data.get("subject", "")).strip()
     message = str(data.get("message", "")).strip()
     category = str(data.get("category") or "general").strip().lower() or "general"
+    context_data = data.get("context_data")
 
     if not name:
         errors["name"] = "name is required."
@@ -19,9 +20,23 @@ def validate_support_ticket_payload(payload: dict | None) -> dict:
         errors["subject"] = "subject is required."
     if not message:
         errors["message"] = "message is required."
+    if context_data not in (None, "") and not isinstance(context_data, dict):
+        errors["context_data"] = "context_data must be an object."
 
     if errors:
         return {"errors": errors}
+
+    normalized_context = None
+    if isinstance(context_data, dict):
+        normalized_context = {}
+        for key, value in context_data.items():
+            normalized_key = str(key or "").strip()
+            if not normalized_key:
+                continue
+            if value in (None, ""):
+                continue
+            normalized_context[normalized_key] = str(value).strip()
+        normalized_context = normalized_context or None
 
     return {
         "name": name,
@@ -30,6 +45,7 @@ def validate_support_ticket_payload(payload: dict | None) -> dict:
         "subject": subject,
         "message": message,
         "category": category,
+        "context_data": normalized_context,
     }
 
 
@@ -43,6 +59,7 @@ def serialize_support_ticket(ticket: SupportTicket) -> dict:
         "subject": ticket.subject,
         "message": ticket.message,
         "category": ticket.category,
+        "context_data": ticket.context_data or {},
         "status": ticket.status.value,
         "admin_note": ticket.admin_note,
         "resolved_at": ticket.resolved_at.isoformat() if ticket.resolved_at else None,

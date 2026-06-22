@@ -13,7 +13,7 @@ from app.blueprints.products.schemas import (
 )
 from app.extensions import db
 from app.middleware.auth_required import auth_required
-from app.models import Banner, Brand, Category, FlashSale, Product
+from app.models import Banner, Brand, Category, CmsPage, FlashSale, Product
 from app.services.product_signal_service import list_recently_viewed_products, record_product_view
 from app.services.recommendation_analytics_service import (
     log_recommendation_click,
@@ -30,6 +30,27 @@ from app.utils.pagination import build_pagination_metadata, normalize_pagination
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _normalize_content_page_url(value: str) -> str:
+    cleaned = f"/{str(value or '').strip().strip('/')}"
+    return "/" if cleaned == "/" else cleaned.rstrip("/")
+
+
+def _serialize_public_cms_page(page: CmsPage) -> dict:
+    return {
+        "id": page.id,
+        "page_key": page.page_key,
+        "url": page.url,
+        "page_type": page.page_type,
+        "title": page.title,
+        "excerpt": page.excerpt,
+        "content": page.content,
+        "meta_title": page.meta_title,
+        "meta_description": page.meta_description,
+        "allow_indexing": page.allow_indexing,
+        "published_at": page.published_at.isoformat() if page.published_at else None,
+    }
 
 @products_bp.get("/categories")
 def list_categories():
@@ -107,6 +128,85 @@ def list_products():
             ),
         }
     )
+
+
+@products_bp.get("/content/pages")
+def list_public_cms_pages():
+    """
+    List published public CMS pages.
+    ---
+    tags:
+      - Content
+    responses:
+      200:
+        description: Public CMS pages.
+    """
+    page_type = request.args.get("page_type", default="", type=str).strip().lower()
+    page_keys = [item.strip().lower() for item in request.args.get("page_keys", default="", type=str).split(",") if item.strip()]
+
+    query = CmsPage.query.filter(
+        CmsPage.status == "published",
+        CmsPage.registration_required.is_(False),
+    ).order_by(CmsPage.is_system_page.desc(), CmsPage.title.asc(), CmsPage.id.asc())
+
+    if page_type:
+        query = query.filter(CmsPage.page_type == page_type)
+    if page_keys:
+        query = query.filter(CmsPage.page_key.in_(page_keys))
+
+    pages = query.all()
+    return jsonify({"items": [_serialize_public_cms_page(page) for page in pages]})
+
+
+@products_bp.get("/content/pages/resolve")
+def resolve_public_cms_page():
+    """
+    Resolve a published public CMS page by storefront URL path.
+    ---
+    tags:
+      - Content
+    responses:
+      200:
+        description: Resolved public CMS page.
+      404:
+        description: Page not found.
+    """
+    requested_url = request.args.get("url", default="", type=str).strip()
+    normalized_url = _normalize_content_page_url(requested_url)
+
+    page = CmsPage.query.filter_by(
+        url=normalized_url,
+        status="published",
+        registration_required=False,
+    ).first()
+    if page is None:
+        return jsonify({"error": {"code": "not_found", "message": "Page not found."}}), 404
+
+    return jsonify({"item": _serialize_public_cms_page(page)})
+
+
+@products_bp.get("/content/pages/<string:page_key>")
+def get_public_cms_page(page_key: str):
+    """
+    Get a published public CMS page by page key.
+    ---
+    tags:
+      - Content
+    responses:
+      200:
+        description: Public CMS page details.
+      404:
+        description: Page not found.
+    """
+    page = CmsPage.query.filter_by(
+        page_key=page_key.strip().lower(),
+        status="published",
+        registration_required=False,
+    ).first()
+    if page is None:
+        return jsonify({"error": {"code": "not_found", "message": "Page not found."}}), 404
+
+    return jsonify({"item": _serialize_public_cms_page(page)})
 
 
 @products_bp.get("/banners")

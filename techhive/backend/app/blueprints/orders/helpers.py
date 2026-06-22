@@ -42,6 +42,7 @@ def serialize_order(order: Order, include_items: bool = False) -> dict:
         "status": order.status.value,
         "delivery_status": order.delivery_status,
         "tracking_token": order.tracking_token,
+        "guest_email": order.guest_email,
         "delivery_zone_name": order.delivery_zone_name,
         "currency": order.currency,
         "subtotal": f"{Decimal(order.subtotal):.2f}",
@@ -59,6 +60,13 @@ def serialize_order(order: Order, include_items: bool = False) -> dict:
             "address_line_1": order.shipping_address_line_1,
             "address_line_2": order.shipping_address_line_2,
         },
+        "delivery_location": {
+            "label": order.delivery_location_label,
+            "latitude": float(order.delivery_latitude) if order.delivery_latitude is not None else None,
+            "longitude": float(order.delivery_longitude) if order.delivery_longitude is not None else None,
+            "distance_km": float(order.delivery_distance_km) if order.delivery_distance_km is not None else None,
+        },
+        "shipping_weight_grams": order.shipping_weight_grams,
         "notes": order.notes,
         "created_at": order.created_at.isoformat(),
     }

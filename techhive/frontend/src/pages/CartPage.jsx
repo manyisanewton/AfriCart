@@ -1,7 +1,8 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import "../styles/cart.css";
 
 export default function CartPage({ cart, setCart }) {
+  const navigate = useNavigate();
 
   function increase(id) {
     setCart(prev =>
@@ -98,7 +99,10 @@ export default function CartPage({ cart, setCart }) {
 
         <h3>Total: KES {total}</h3>
 
-        <button className="checkout-btn">
+        <button
+          className="checkout-btn"
+          onClick={() => navigate("/checkout")}
+        >
           Proceed to Checkout
         </button>
       </div>

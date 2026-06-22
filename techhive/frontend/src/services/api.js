@@ -143,4 +143,28 @@ export const productAPI = {
     normalizeProduct,
 };
 
+export const contentAPI = {
+    listPages: async(params = {}) => {
+        const response = await api.get('/content/pages', { params });
+        return response;
+    },
+    getPageByKey: async(pageKey) => {
+        const response = await api.get(`/content/pages/${pageKey}`);
+        return response;
+    },
+    resolvePage: async(url) => {
+        const response = await api.get('/content/pages/resolve', {
+            params: { url },
+        });
+        return response;
+    },
+};
+
+export const supportAPI = {
+    createTicket: async(payload) => {
+        const response = await api.post('/support/tickets', payload);
+        return response;
+    },
+};
+
 export default api;
